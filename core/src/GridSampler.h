@@ -38,6 +38,8 @@ namespace ZXing {
 */
 DetectorResult SampleGrid(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix);
 
+DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix);
+
 template <typename PointT = PointF>
 Quadrilateral<PointT> Rectangle(int x0, int x1, int y0, int y1, typename PointT::value_t o = 0.5)
 {
@@ -51,8 +53,22 @@ public:
 	PerspectiveTransform mod2Pix;
 };
 
+class Warp
+{
+public:
+	Warp() = default;
+	Warp(int sampleCount, const PointF& defaultVal = { 0.0, 0.0 }) : xOffsets(sampleCount, defaultVal), yOffsets(sampleCount, defaultVal) {};
+	Warp(int xSize, int ySize, const PointF& defaultVal = { 0.0, 0.0 }) : xOffsets(xSize, defaultVal), yOffsets(ySize, defaultVal) {};
+	std::vector<PointF> xOffsets;
+	std::vector<PointF> yOffsets;
+};
+
 using ROIs = std::vector<ROI>;
 
 DetectorResult SampleGrid(const BitMatrix& image, int width, int height, const ROIs& rois);
+
+DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const ROIs& rois);
+
+void CorrectCorners(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, PointF& bottomRight, PointF& topRight, int gridSize, float subpixelOffset);
 
 } // ZXing
