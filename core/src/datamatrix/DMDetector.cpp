@@ -212,6 +212,13 @@ static DetectorResult SampleGrid(const BitMatrix& image, const ResultPoint& topL
 					  {Rectangle(width, height, 0.5), {topLeft, topRight, bottomRight, bottomLeft}});
 }
 
+static DetectorResult SampleGridWarped(const BitMatrix& image, const ResultPoint& topLeft, const ResultPoint& bottomLeft,
+								 const ResultPoint& bottomRight, const ResultPoint& topRight, int width, int height)
+{
+	return SampleGridWarped(image, width, height,
+					  {Rectangle(width, height, 0.5), {topLeft, topRight, bottomRight, bottomLeft}});
+}
+
 /**
 * Returns the z component of the cross product between vectors BC and BA.
 */
@@ -1280,6 +1287,23 @@ DetectorResults Detect(const BitMatrix& image, bool tryHarder, bool tryRotate, b
 	return result;
 
 #endif
+}
+
+DetectorResults DetectDefined(const BitMatrix& image, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3, bool tryHarder, bool tryRotate, bool isPure, DecoderResult& outDecoderResult)
+{
+
+	for (auto dim : { int(20), 22, 24, 26, 32, 36, 40, 44 }) {
+		PointF TL = P0, BL = P1, BR = P2, TR = P3;
+		CorrectCorners(image, TL, BL, BR, TR, dim);
+		auto detRes = SampleGridWarped(image, TL, BL, BR, TR, dim, dim);
+		if (detRes.isValid()) {
+			outDecoderResult = Decode(detRes.bits());
+			if (outDecoderResult.isValid()) {
+				return detRes;
+			}
+		}
+	}
+	return {};
 }
 
 } // namespace ZXing::DataMatrix

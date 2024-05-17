@@ -26,5 +26,8 @@ using DetectorResults = DetectorResult;
 
 DetectorResults Detect(const BitMatrix& image, bool tryHarder, bool tryRotate, bool isPure);
 
+DetectorResults DetectDefined(const BitMatrix& image, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3, bool tryHarder, bool tryRotate, bool isPure, DecoderResult& outDecoderResult);
+
+
 } // DataMatrix
 } // ZXing

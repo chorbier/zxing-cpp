@@ -35,6 +35,7 @@ class Result
 
 	friend Result MergeStructuredAppendSequence(const std::vector<Result>& results);
 	friend std::vector<Result> ReadBarcodes(const ImageView&, const DecodeHints&);
+	friend std::vector<Result> ReadBarcodesCRPT(const ImageView& _iv, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3, const DecodeHints& hints);
 	friend void IncrementLineCount(Result&);
 
 public:

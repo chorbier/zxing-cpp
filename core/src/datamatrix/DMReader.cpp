@@ -35,6 +35,20 @@ Result Reader::decode(const BinaryBitmap& image) const
 #endif
 }
 
+Result Reader::decode(const BinaryBitmap& image, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3)
+{
+	auto binImg = image.getBitMatrix();
+	if (binImg == nullptr)
+		return {};
+
+	DecoderResult decoderResult;
+	auto detectorResult = DetectDefined(*binImg, P0, P1, P2, P3, _hints.tryHarder(), _hints.tryRotate(), _hints.isPure(), decoderResult);
+
+	if (!detectorResult.isValid()) return {};
+
+	return Result(std::move(decoderResult), std::move(detectorResult).position(), BarcodeFormat::DataMatrix);
+}
+
 #ifdef __cpp_impl_coroutine
 Results Reader::decode(const BinaryBitmap& image, int maxSymbols) const
 {

@@ -16,6 +16,9 @@ public:
 	using ZXing::Reader::Reader;
 
 	Result decode(const BinaryBitmap& image) const override;
+
+	Result decode(const BinaryBitmap& image, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3);
+
 #ifdef __cpp_impl_coroutine
 	Results decode(const BinaryBitmap& image, int maxSymbols) const override;
 #endif
