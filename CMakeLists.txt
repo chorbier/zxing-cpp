@@ -67,6 +67,8 @@ include(zxing.cmake)
 
 if (BUILD_EXAMPLES)
     add_subdirectory (example)
+    add_subdirectory (debug)
+    add_subdirectory (drawdebug)
 endif()
 if (BUILD_BLACKBOX_TESTS)
     add_subdirectory (test/blackbox)
@@ -79,5 +81,5 @@ if (BUILD_PYTHON_MODULE)
 endif()
 
 # log-lib for aarm64 build
-find_library(log-lib log)
-target_link_libraries(ZXing INTERFACE ${log-lib})
+#find_library(log-lib log)
+#target_link_libraries(ZXing INTERFACE ${log-lib})

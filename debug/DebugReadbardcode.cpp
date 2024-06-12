@@ -5,6 +5,7 @@
 #include "Result.h"
 #include "opencv2/opencv.hpp"
 
+
 #include "BinaryBitmap.h"
 #include "DecodeHints.h"
 #include "GlobalHistogramBinarizer.h"
@@ -16,15 +17,17 @@
 
 #include "datamatrix/DMReader.h"
 #include "Point.h"
+#include "DebugDrawStuff.h"
 
 #include <climits>
 #include <memory>
 #include <stdexcept>
+#include <chrono>
 
+#include <filesystem>
+namespace fs = std::filesystem;
 
 namespace ZXing {
-
-
 
 struct PointComparator
 {
@@ -63,8 +66,12 @@ cv::Mat createCircularMask(int h, int w, cv::Point center, int radius)
 	return mask;
 }
 
+double findEdgesDuration = 0.0;
+
 std::vector<cv::Point2f> findEdgesOfSquare(cv::Mat img)
 {
+    auto start = std::chrono::high_resolution_clock::now();
+    
 	cv::Mat imgGr;
 	cv::cvtColor(img, imgGr, cv::COLOR_BGR2GRAY);
 
@@ -98,6 +105,21 @@ std::vector<cv::Point2f> findEdgesOfSquare(cv::Mat img)
 	std::vector<cv::Point> approx;
 	cv::approxPolyDP(*cnt, approx, epsilon, true);
 
+
+	// DEBUG DRAW
+	{
+		auto drawImageCopy = img.clone();
+
+		std::vector<std::vector<cv::Point>> contours = {approx};
+
+		cv::drawContours(drawImageCopy, contours, 0, cv::Scalar(0,0,255), 1);
+
+		cv::imwrite(debugOutputFilepath, drawImageCopy);
+
+	}
+
+	//END DEBUG DRAW
+
 	std::vector<cv::Point2f> approx2f(approx.begin(), approx.end());
 	approx2f = sortPoints(approx2f);
 
@@ -118,6 +140,8 @@ std::vector<cv::Point2f> findEdgesOfSquare(cv::Mat img)
 		approx.y = (approx.y) / height; // Subtract the margin and normalize
 	}
 
+	findEdgesDuration += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
+
 	return approx2f;
 }
 
@@ -137,6 +161,7 @@ inline ImageView ImageViewFromMat(const cv::Mat& image)
 }
 
 
+double tryToDecodeTime = 0.0;
 std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, const DecodeHints& hints)
 {
 	std::unique_ptr<Results> zxing_results = nullptr;
@@ -149,15 +174,19 @@ std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, 
 		pointFs.emplace_back(static_cast<double>(cvPoint.x), static_cast<double>(cvPoint.y));
 	}
 		for (const auto& point : pointFs) {
-	    std::cerr << "Points: (" << point.x << ", " << point.y << ") ";
+	    // std::cerr << "Points: (" << point.x << ", " << point.y << ") ";
 		}
 
+	auto start = std::chrono::high_resolution_clock::now();
 	try {
 		zxing_results = std::make_unique<Results>(
 			ReadBarcodesCRPT(ImageViewFromMat(image), pointFs[0], pointFs[1], pointFs[2], pointFs[3], hints));
 	} catch (...) {
 		zxing_results = nullptr;
 	}
+	tryToDecodeTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
+
+
 	return zxing_results;
 }
 }
@@ -166,6 +195,7 @@ int main(int argc, char *argv[])
 	const auto hints = ZXing::DecodeHints()
 						   .setFormats(ZXing::BarcodeFormat::EAN13 | ZXing::BarcodeFormat::EAN8 | ZXing::BarcodeFormat::DataMatrix
 									   | ZXing::BarcodeFormat::QRCode | ZXing::BarcodeFormat::PDF417)
+							.setTryInvert(false)
 						   .setTryRotate(true)
 						   .setTryDownscale(true)
 						   .setDownscaleFactor(4)
@@ -174,14 +204,69 @@ int main(int argc, char *argv[])
 						   .setMaxNumberOfSymbols(0xff)
 						   .setEanAddOnSymbol(ZXing::EanAddOnSymbol::Ignore);
 	// Create an instance of ImageView with the image you want to process
-	cv::Mat image_cv = cv::imread("test3.png", cv::IMREAD_COLOR);
+	// cv::Mat image_cv = cv::imread("/home/chorbier/zxing-cpp/debug/test3.png", cv::IMREAD_COLOR);
 
-	std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image_cv, image_cv, hints);
-	std::cout << "Zxing results size: " << zxing_results_ptr->size()  << std::endl;
-	std::cout << "Processed "  << std::endl;
-    for (const auto& result : *zxing_results_ptr) {
-        std::cout << "Barcode text: " << result.text() << std::endl;
-    }
+    // std::string folder("/home/chorbier/dm-tests/generated_bottle");
+    std::string folder("/home/chorbier/dm-tests/real");
+    std::vector<cv::String> filenames;
+    cv::glob(folder, filenames, false);
+
+	int cnt = 0;
+
+	double totalTime = 0;
+	double imreadTime = 0;
+	auto start = std::chrono::high_resolution_clock::now();
+
+	for(auto& fileName : filenames) {
+
+		auto path = fs::path(fileName);
+
+		auto start = std::chrono::high_resolution_clock::now();
+		cv::Mat image_cv = cv::imread(fileName, cv::IMREAD_COLOR);
+		imreadTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
+
+		
+		ZXing::debugOutputFilepath = ZXing::debugOutputFolder / path.filename();
+
+		std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image_cv, image_cv, hints);
+		bool undetected = true;
+		for (const auto& result : *zxing_results_ptr) {
+			// std::cout << fileName << std::endl << "Barcode text: " << result.text() << std::endl;
+			undetected = false;
+
+			cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_cv);
+			cnt++;
+			break;
+		}
+		if(undetected) {
+			cv::imwrite(ZXing::debugOutputFolder/ "undetected" / path.filename(), image_cv);
+		}
+
+	}
+
+		// cv::imwrite("/home/chorbier/dm_debug/test.png", image_cv);
+
+
+	totalTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
+
+	std::cout << float(cnt) / float(filenames.size()) << " " << cnt << " of " << filenames.size() << std::endl;
+	std::cout << "findEdges: " << ZXing::findEdgesDuration / totalTime << std::endl << "try to decode: " << ZXing::tryToDecodeTime / totalTime << std::endl << "imread: " << imreadTime / totalTime;
+	std::cout << std::endl;
+
+		// std::cout << "Zxing results size: " << zxing_results_ptr->size()  << std::endl;
+		// std::cout << "Processed "  << std::endl;
+		// for (const auto& result : *zxing_results_ptr) {
+		// 	std::cout << "Barcode text: " << result.text() << std::endl;
+		// }
+
+	// cv::Mat image_cv = cv::imread("/home/chorbier/dm-tests/dm1.png", cv::IMREAD_COLOR);
+
+	// std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image_cv, image_cv, hints);
+	// std::cout << "Zxing results size: " << zxing_results_ptr->size()  << std::endl;
+	// std::cout << "Processed "  << std::endl;
+    // for (const auto& result : *zxing_results_ptr) {
+    //     std::cout << "Barcode text: " << result.text() << std::endl;
+    // }
 
 	return 0;
 }

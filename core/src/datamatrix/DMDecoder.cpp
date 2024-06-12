@@ -26,7 +26,7 @@
 #include <vector>
 #include <iostream>
 
-#include <android/log.h>
+// #include <android/log.h>
 #include <sstream>
 namespace ZXing::DataMatrix {
 

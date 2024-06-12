@@ -4,4 +4,6 @@ CMakeLists.txt.user
 *.lib
 *.d
 *.a
-
+.gitignore
+build/
+.vscode
