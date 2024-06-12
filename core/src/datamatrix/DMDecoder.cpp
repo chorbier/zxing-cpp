@@ -26,7 +26,7 @@
 #include <vector>
 #include <iostream>
 
-// #include <android/log.h>
+//#include <android/log.h>
 #include <sstream>
 namespace ZXing::DataMatrix {
 
@@ -424,7 +424,7 @@ static DecoderResult DoDecode(const BitMatrix& bits)
 	if (version == nullptr){
 		//__android_log_print(ANDROID_LOG_INFO, "DODECODE", "2");
 		return FormatError("Invalid matrix dimension");}
-	
+
 	//__android_log_print(ANDROID_LOG_INFO, "Version", "Version %d", version->versionNumber);
 
 	// Read codewords

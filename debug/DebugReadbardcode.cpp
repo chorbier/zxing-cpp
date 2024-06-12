@@ -160,6 +160,78 @@ inline ImageView ImageViewFromMat(const cv::Mat& image)
 	return {image.data, image.cols, image.rows, fmt};
 }
 
+cv::Mat get_next_possible_image(cv::Mat image, int candidate) {
+	cv::Mat image_candidate;
+	cv::Mat image_mixed;
+	cv::Mat blurred;
+	cv::Mat image_scaled;
+	cv::Mat image_resized;
+	cv::Mat image_gr;
+	cv::Mat image_gr2;
+
+	cv::cvtColor(image, image_gr, cv::COLOR_BGR2GRAY);
+	switch (candidate)
+	{
+	case 0:
+		image_candidate = image.clone();
+
+	case 1:
+		cv::adaptiveThreshold(image_gr, image_candidate, 255, 0, 0, 37, 2);
+		image_gr.release();
+		break;
+
+	case 2:
+		cv::GaussianBlur(image, blurred, cv::Size(23, 23), 0);
+		cv::addWeighted(image, 1.9, blurred, -0.9, 0, image_candidate);
+		blurred.release();
+		break;
+
+	case 3:
+		cv::adaptiveThreshold(image_gr, image_candidate, 255, cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY, 17, 4);
+		image_gr.release();
+		break;
+
+	case 4:
+		cv::GaussianBlur(image, blurred, cv::Size(15,15), 0);
+		cv::addWeighted(image, 1.8485371046459401, blurred, -0.8485371046459401, 0, image_mixed);
+		blurred.release();
+		cv::cvtColor(image_mixed, image_gr2, cv::COLOR_BGR2GRAY);
+		image_mixed.release();
+		cv::threshold(image_gr2, image_candidate, 100, 255, 2);
+		image_gr2.release();
+		break;
+
+	case 5:
+		cv::GaussianBlur(image, blurred, cv::Size(45,45), 0);
+		cv::addWeighted(image, 1.5037081148746935, blurred, -0.5037081148746935, 0, image_mixed);
+		blurred.release();
+		cv::cvtColor(image_mixed, image_gr2, cv::COLOR_BGR2GRAY);
+		image_mixed.release();
+		cv::threshold(image_gr2, image_candidate, 132, 255, 1);
+		image_gr2.release();
+		break;
+
+
+	case 6:
+		cv::convertScaleAbs(image,image_scaled, 0.7448063260333111, 30);
+		//int width = ;
+		//int height = ;
+		cv::resize(image_scaled, image_resized, cv::Size(int(image.cols * 2.1), int(image.rows * 2.1)), cv::INTER_LINEAR);
+		image_scaled.release();
+		cv::GaussianBlur(image_resized, blurred, cv::Size(49,49), 0);
+		cv::addWeighted(image_resized, 1.9705662110228968, blurred, -0.9705662110228968, 0, image_mixed);
+		image_resized.release();
+		blurred.release();
+		cv::cvtColor(image_mixed, image_candidate, cv::COLOR_BGR2GRAY);
+		image_mixed.release();
+		break;
+
+
+	default:
+		break;
+	}
+	return image_candidate;
+}
 
 double tryToDecodeTime = 0.0;
 std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, const DecodeHints& hints)
@@ -204,54 +276,53 @@ int main(int argc, char *argv[])
 						   .setMaxNumberOfSymbols(0xff)
 						   .setEanAddOnSymbol(ZXing::EanAddOnSymbol::Ignore);
 	// Create an instance of ImageView with the image you want to process
-	// cv::Mat image_cv = cv::imread("/home/chorbier/zxing-cpp/debug/test3.png", cv::IMREAD_COLOR);
 
-    // std::string folder("/home/chorbier/dm-tests/generated_bottle");
-    std::string folder("/home/chorbier/dm-tests/real");
-    std::vector<cv::String> filenames;
-    cv::glob(folder, filenames, false);
 
-	int cnt = 0;
+    // std::string folder("/home/chorbier/dm-tests/real");
+    // std::vector<cv::String> filenames;
+    // cv::glob(folder, filenames, false);
 
-	double totalTime = 0;
-	double imreadTime = 0;
-	auto start = std::chrono::high_resolution_clock::now();
+	// int cnt = 0;
 
-	for(auto& fileName : filenames) {
+	// double totalTime = 0;
+	// double imreadTime = 0;
+	// auto start = std::chrono::high_resolution_clock::now();
 
-		auto path = fs::path(fileName);
+	// for(auto& fileName : filenames) {
 
-		auto start = std::chrono::high_resolution_clock::now();
-		cv::Mat image_cv = cv::imread(fileName, cv::IMREAD_COLOR);
-		imreadTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
+	// 	auto path = fs::path(fileName);
+
+	// 	auto start = std::chrono::high_resolution_clock::now();
+	// 	cv::Mat image_cv = cv::imread(fileName, cv::IMREAD_COLOR);
+	// 	imreadTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
 
 		
-		ZXing::debugOutputFilepath = ZXing::debugOutputFolder / path.filename();
+	// 	ZXing::debugOutputFilepath = ZXing::debugOutputFolder / path.filename();
 
-		std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image_cv, image_cv, hints);
-		bool undetected = true;
-		for (const auto& result : *zxing_results_ptr) {
-			// std::cout << fileName << std::endl << "Barcode text: " << result.text() << std::endl;
-			undetected = false;
+	// 	std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image_cv, image_cv, hints);
+	// 	bool undetected = true;
+	// 	for (const auto& result : *zxing_results_ptr) {
+	// 		// std::cout << fileName << std::endl << "Barcode text: " << result.text() << std::endl;
+	// 		undetected = false;
 
-			cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_cv);
-			cnt++;
-			break;
-		}
-		if(undetected) {
-			cv::imwrite(ZXing::debugOutputFolder/ "undetected" / path.filename(), image_cv);
-		}
+	// 		cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_cv);
+	// 		cnt++;
+	// 		break;
+	// 	}
+	// 	if(undetected) {
+	// 		cv::imwrite(ZXing::debugOutputFolder/ "undetected" / path.filename(), image_cv);
+	// 	}
 
-	}
+	// }
 
 		// cv::imwrite("/home/chorbier/dm_debug/test.png", image_cv);
 
 
-	totalTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
+	// totalTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
 
-	std::cout << float(cnt) / float(filenames.size()) << " " << cnt << " of " << filenames.size() << std::endl;
-	std::cout << "findEdges: " << ZXing::findEdgesDuration / totalTime << std::endl << "try to decode: " << ZXing::tryToDecodeTime / totalTime << std::endl << "imread: " << imreadTime / totalTime;
-	std::cout << std::endl;
+	// std::cout << float(cnt) / float(filenames.size()) << " " << cnt << " of " << filenames.size() << std::endl;
+	// std::cout << "findEdges: " << ZXing::findEdgesDuration / totalTime << std::endl << "try to decode: " << ZXing::tryToDecodeTime / totalTime << std::endl << "imread: " << imreadTime / totalTime;
+	// std::cout << std::endl;
 
 		// std::cout << "Zxing results size: " << zxing_results_ptr->size()  << std::endl;
 		// std::cout << "Processed "  << std::endl;
@@ -267,6 +338,64 @@ int main(int argc, char *argv[])
     // for (const auto& result : *zxing_results_ptr) {
     //     std::cout << "Barcode text: " << result.text() << std::endl;
     // }
+
+    std::string folder("/home/chorbier/dm-tests/real");
+    std::vector<cv::String> filenames;
+    cv::glob(folder, filenames, false);
+
+	int cnt = 0;
+
+	double totalTime = 0;
+	double imreadTime = 0;
+	auto start = std::chrono::high_resolution_clock::now();
+
+	for(auto& fileName : filenames) {
+		auto start = std::chrono::high_resolution_clock::now();
+		cv::Mat image_cv = cv::imread(fileName, cv::IMREAD_COLOR);
+		imreadTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
+		
+		ZXing::debugOutputFilepath = ZXing::debugOutputFolder / path.filename();
+
+		std::unique_ptr<ZXing::Results> zxing_results_ptr;
+		int width = image_cv.cols;
+		int height = image_cv.rows;
+		if (width * height >= 100) {
+			for (int candidate = 0; candidate <= 6; candidate++) {
+				cv::Mat image_candidate = ZXing::get_next_possible_image(image_cv, candidate);
+				std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image_cv, image_candidate, hints);
+				image_candidate.release();
+				if (zxing_results_ptr != nullptr && zxing_results_ptr->size() >= 1) {
+
+					bool undetected = true;
+					for (const auto& result : *zxing_results_ptr) {
+						// std::cout << fileName << std::endl << "Barcode text: " << result.text() << std::endl;
+						undetected = false;
+						cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_cv);
+						cnt++;
+						break;
+					}
+					if(undetected) {
+						cv::imwrite(ZXing::debugOutputFolder/ "undetected" / path.filename(), image_cv);
+					}
+					// std::cout << "Zxing results size: " << zxing_results_ptr->size() << std::endl;
+					// std::cout << "Processed " << std::endl;
+					// for (const auto& result : *zxing_results_ptr) {
+
+					// 		std::cout << "Barcode text: " << result.text() << std::endl;
+					// 	break;
+					// }
+				}
+			}
+		}
+	}
+	
+	totalTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
+
+	std::cout << float(cnt) / float(filenames.size()) << " " << cnt << " of " << filenames.size() << std::endl;
+	std::cout << "findEdges: " << ZXing::findEdgesDuration / totalTime << std::endl << "try to decode: " << ZXing::tryToDecodeTime / totalTime << std::endl << "imread: " << imreadTime / totalTime;
+	std::cout << std::endl;
+
+
 
 	return 0;
 }

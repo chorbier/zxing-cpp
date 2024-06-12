@@ -6,8 +6,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "GridSampler.h"
-#include <float.h>
-
+#include <cfloat>
 #ifdef PRINT_DEBUG
 #include "LogMatrix.h"
 #include "BitMatrixIO.h"
