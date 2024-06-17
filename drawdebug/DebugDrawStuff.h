@@ -7,8 +7,8 @@ namespace ZXing {
 static fs::path debugOutputFolder = "/home/chorbier/dm_debug/";
 static fs::path debugOutputFilepath;
 
-void drawDebugImage(const class BitMatrix& image, const std::string& filename);
-void drawDebugImageWithLines(const class BitMatrix& image, const std::string& filename, const std::vector<double>& corners);
+void drawDebugImage(const class BitMatrix& image, const std::string& postfix);
+void drawDebugImageWithLines(const class BitMatrix& image, const std::string& postfix, const std::vector<double>& corners);
 
 }
 
