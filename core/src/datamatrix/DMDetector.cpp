@@ -25,7 +25,7 @@
 #include "Scope.h"
 #include "WhiteRectDetector.h"
 
-#include "DebugDrawStuff.h"
+// #include "DebugDrawStuff.h"
 
 #include <string>
 #include <algorithm>

@@ -17,7 +17,7 @@
 
 #include "datamatrix/DMReader.h"
 #include "Point.h"
-#include "DebugDrawStuff.h"
+// #include "DebugDrawStuff.h"
 
 #include <climits>
 #include <memory>
@@ -295,7 +295,7 @@ int main(int argc, char *argv[])
 		cv::Mat image_cv = cv::imread(fileName, cv::IMREAD_COLOR);
 		imreadTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
 		
-		ZXing::debugOutputFilepath = ZXing::debugOutputFolder / path.filename();
+		// ZXing::debugOutputFilepath = ZXing::debugOutputFolder / path.filename();
 
 		std::unique_ptr<ZXing::Results> zxing_results_ptr;
 		int width = image_cv.cols;
@@ -311,7 +311,7 @@ int main(int argc, char *argv[])
 						// std::cout << fileName << std::endl << "Barcode text: " << result.text() << std::endl;
 						undetected = false;
 						// cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_cv);
-						cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_candidate);
+						// cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_candidate);
 						cnt++;
 						found = true;
 						break;
