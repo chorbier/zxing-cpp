@@ -252,7 +252,8 @@ std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, 
 	auto start = std::chrono::high_resolution_clock::now();
 	try {
 		zxing_results = std::make_unique<Results>(
-			ReadBarcodesCRPT(ImageViewFromMat(image), pointFs[0], pointFs[1], pointFs[2], pointFs[3], hints));
+			// readbarcodescrpt_detector_v1_samplegridv1(ImageViewFromMat(image), pointFs[0], pointFs[1], pointFs[2], pointFs[3], hints));
+			readbarcodescrpt_samplegridv1(ImageViewFromMat(image), hints));
 	} catch (...) {
 		zxing_results = nullptr;
 	}

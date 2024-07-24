@@ -79,7 +79,7 @@ public:
 	auto signedDistance(PointF p) const { return dot(normal(), p) - c; }
 	template <typename T> auto distance(PointT<T> p) const { return std::abs(signedDistance(PointF(p))); }
 	PointF project(PointF p) const { return p - signedDistance(p) * normal(); }
-
+	PointF centroid() const { return Reduce(_points) / _points.size(); }
 	void reset()
 	{
 		_points.clear();

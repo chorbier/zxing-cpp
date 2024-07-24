@@ -190,7 +190,7 @@ Results ReadBarcodes(const ImageView& _iv, const DecodeHints& hints)
 	return results;
 }
 
-Results ReadBarcodesCRPT(const ImageView& _iv, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3, const DecodeHints& hints)
+Results readbarcodescrpt_detector_v1_samplegridv1(const ImageView& _iv, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3, const DecodeHints& hints)
 {
 	if (sizeof(PatternType) < 4 && hints.hasFormat(BarcodeFormat::LinearCodes) && (_iv.width() > 0xffff || _iv.height() > 0xffff))
 		throw std::invalid_argument("maximum image width/height is 65535");
@@ -240,6 +240,76 @@ Results ReadBarcodesCRPT(const ImageView& _iv, const PointF& P0, const PointF& P
 					r.setIsInverted(bitmap->inverted());
 					results.push_back(std::move(r));
 					return results;
+				}
+
+				if (maxSymbols <= 0)
+					return results;
+			}
+		}
+	}
+
+	return results;
+}
+
+Results readbarcodescrpt_samplegridv1(const ImageView& _iv, const DecodeHints& hints)
+{
+	if (sizeof(PatternType) < 4 && hints.hasFormat(BarcodeFormat::LinearCodes) && (_iv.width() > 0xffff || _iv.height() > 0xffff))
+		throw std::invalid_argument("maximum image width/height is 65535");
+
+	LumImage lum;
+	ImageView iv = SetupLumImageView(_iv, lum, hints);
+
+	auto reader = std::make_unique<ZXing::DataMatrix::DMCRPTReader>(hints);
+
+	auto formatsBenefittingFromClosing = BarcodeFormat::Aztec | BarcodeFormat::DataMatrix | BarcodeFormat::QRCode | BarcodeFormat::MicroQRCode;
+	DecodeHints closedHints = hints;
+	std::unique_ptr<MultiFormatReader> closedReader;
+	if (hints.tryDenoise() && hints.hasFormat(formatsBenefittingFromClosing)) {
+		closedHints.setFormats((hints.formats().empty() ? BarcodeFormat::Any : hints.formats()) & formatsBenefittingFromClosing);
+		closedReader = std::make_unique<MultiFormatReader>(closedHints);
+	}
+
+	LumImagePyramid pyramid(iv, hints.downscaleThreshold() * hints.tryDownscale(), hints.downscaleFactor());
+
+	Results results;
+	int maxSymbols = hints.maxNumberOfSymbols() ? hints.maxNumberOfSymbols() : INT_MAX;
+	for (auto&& iv : pyramid.layers) {
+		auto bitmap = CreateBitmap(hints.binarizer(), iv);
+
+		for (int close = 0; close <= (closedReader ? 1 : 0); ++close) {
+			if (close)
+				bitmap->close();
+
+			// TODO: check if closing after invert would be beneficial
+			for (int invert = 0; invert <= static_cast<int>(hints.tryInvert() && !close); ++invert) {
+				if (invert)
+					bitmap->invert();
+
+				if(!close) {
+					auto r = reader->decode(*bitmap);
+					if (r.isValid()) {
+						if (iv.width() != _iv.width())
+							r.setPosition(Scale(r.position(), _iv.width() / iv.width()));
+						if (!Contains(results, r)) {
+							r.setDecodeHints(hints);
+							r.setIsInverted(bitmap->inverted());
+							results.push_back(std::move(r));
+							--maxSymbols;
+						}
+					}
+				} else {
+					auto rs = closedReader->readMultiple(*bitmap, maxSymbols);
+					for (auto& r : rs) {
+						if (iv.width() != _iv.width())
+							r.setPosition(Scale(r.position(), _iv.width() / iv.width()));
+						if (!Contains(results, r)) {
+							r.setDecodeHints(hints);
+							r.setIsInverted(bitmap->inverted());
+							results.push_back(std::move(r));
+							--maxSymbols;
+						}
+					}
+
 				}
 
 				if (maxSymbols <= 0)

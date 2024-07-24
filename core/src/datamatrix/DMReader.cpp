@@ -35,7 +35,6 @@ Result Reader::decode(const BinaryBitmap& image) const
 #endif
 }
 
-
 Result Reader::decode(const BinaryBitmap& image, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3)
 {
 	auto binImg = image.getBitMatrix();
@@ -68,6 +67,36 @@ Results Reader::decode(const BinaryBitmap& image, int maxSymbols) const
 	}
 
 	return results;
+}
+#endif
+
+
+Result DMCRPTReader::decode(const BinaryBitmap& image) const
+{
+	auto binImg = image.getBitMatrix();
+	if (binImg == nullptr)
+		return {};
+
+	DecoderResult decoderResult;
+	auto detectorResult = DetectSamplegridV1(*binImg, _hints.tryHarder(), _hints.tryRotate(), _hints.isPure(), decoderResult);
+
+	if (!detectorResult.isValid()) return {};
+
+	return Result(std::move(decoderResult), std::move(detectorResult).position(), BarcodeFormat::DataMatrix);
+}
+#ifdef __cpp_impl_coroutine
+Result DMCRPTReader::decode(const BinaryBitmap& image, int maxSymbols) const
+{
+	auto binImg = image.getBitMatrix();
+	if (binImg == nullptr)
+		return {};
+
+	DecoderResult decoderResult;
+	auto detectorResult = DetectSamplegridV1(*binImg, _hints.tryHarder(), _hints.tryRotate(), _hints.isPure(), decoderResult);
+
+	if (!detectorResult.isValid()) return {};
+
+	return Result(std::move(decoderResult), std::move(detectorResult).position(), BarcodeFormat::DataMatrix);
 }
 #endif
 } // namespace ZXing::DataMatrix

@@ -22,6 +22,20 @@ public:
 #ifdef __cpp_impl_coroutine
 	Results decode(const BinaryBitmap& image, int maxSymbols) const override;
 #endif
+
 };
+
+class DMCRPTReader : public ZXing::Reader
+{
+public:
+	using ZXing::Reader::Reader;
+
+	Result decode(const BinaryBitmap& image) const override;
+#ifdef __cpp_impl_coroutine
+	Results decode(const BinaryBitmap& image, int maxSymbols) const override;
+#endif
+};
+
+
 
 } // namespace ZXing::DataMatrix

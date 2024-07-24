@@ -28,7 +28,8 @@ Result ReadBarcode(const ImageView& buffer, const DecodeHints& hints = {});
  * @return #Results list of results found, may be empty
  */
 Results ReadBarcodes(const ImageView& buffer, const DecodeHints& hints = {});
-Results ReadBarcodesCRPT(const ImageView& buffer, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3, const DecodeHints& hints = {});
+Results readbarcodescrpt_detector_v1_samplegridv1(const ImageView& buffer, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3, const DecodeHints& hints = {});
+Results readbarcodescrpt_samplegridv1(const ImageView& buffer, const DecodeHints& hints = {});
 
 } // ZXing
 

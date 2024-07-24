@@ -81,5 +81,6 @@ if (BUILD_PYTHON_MODULE)
 endif()
 
 # log-lib for aarm64 build
+# breaking linux build, just comment it out when building for linux
 #find_library(log-lib log)
 #target_link_libraries(ZXing INTERFACE ${log-lib})
