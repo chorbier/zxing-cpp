@@ -37,7 +37,7 @@ namespace ZXing {
 *   defined by the "src" parameters. Result is empty if transformation is invalid (out of bound access).
 */
 DetectorResult SampleGrid(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix);
-DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix);
+DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const class Warp& warp, const PerspectiveTransform& mod2Pix);
 template <typename PointT = PointF>
 Quadrilateral<PointT> Rectangle(int x0, int x1, int y0, int y1, typename PointT::value_t o = 0.5)
 {
@@ -55,14 +55,22 @@ public:
 	Warp() = default;
 	Warp(int sampleCount, const PointF& defaultVal = { 0.0, 0.0 }) : xOffsets(sampleCount, defaultVal), yOffsets(sampleCount, defaultVal) {};
 	Warp(int xSize, int ySize, const PointF& defaultVal = { 0.0, 0.0 }) : xOffsets(xSize, defaultVal), yOffsets(ySize, defaultVal) {};
+	
+	void Resample(int sizeX, int sizeY);
+
+	inline bool isValid() {
+		return !xOffsets.empty() && !yOffsets.empty();
+	}
+
 	std::vector<PointF> xOffsets;
 	std::vector<PointF> yOffsets;
 };
 using ROIs = std::vector<ROI>;
 DetectorResult SampleGrid(const BitMatrix& image, int width, int height, const ROIs& rois);
 
-DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const ROIs& rois);
+DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const Warp& warp, const ROIs& rois);
 void CorrectCorners(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, PointF& bottomRight, PointF& topRight, int gridSize, float subpixelOffset = 0.5);
+Warp ComputeWarp(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, PointF& bottomRight, PointF& topRight, int width, int height, float subpixelOffset = 0.5);
 
 int FindRotation(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, PointF& bottomRight, PointF& topRight, int gridSize);
 

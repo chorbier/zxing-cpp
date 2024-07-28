@@ -218,9 +218,9 @@ namespace ZXing::DataMatrix {
     }
 
     static DetectorResult SampleGridWarped(const BitMatrix& image, const ResultPoint& topLeft, const ResultPoint& bottomLeft,
-                                           const ResultPoint& bottomRight, const ResultPoint& topRight, int width, int height)
+                                           const ResultPoint& bottomRight, const ResultPoint& topRight, int width, int height, const Warp& warp)
     {
-        return SampleGridWarped(image, width, height,
+        return SampleGridWarped(image, width, height, warp,
                                 {Rectangle(width, height, 0.5), {topLeft, topRight, bottomRight, bottomLeft}});
     }
 
@@ -731,7 +731,7 @@ namespace ZXing::DataMatrix {
     };
 
 
-    static DetectorResult Scan(EdgeTracer& startTracer, std::array<DMRegressionLine, 4>& lines, bool scanWarped = false, bool correctCorners = false)
+    static DetectorResult Scan(EdgeTracer& startTracer, std::array<DMRegressionLine, 4>& lines, Warp* warp = nullptr, bool tryToTraceWarp = false, bool correctCorners = false)
     {
         while (startTracer.moveToNextWhiteAfterBlack()) {
             log(startTracer.p);
@@ -860,14 +860,23 @@ namespace ZXing::DataMatrix {
             };
 
             DetectorResult res;
-            if(scanWarped) {
+			if(tryToTraceWarp && warp) {
+				if(!warp->isValid() || warp->xOffsets.size() > dimT || warp->yOffsets.size() > dimR) {
+					*warp = ComputeWarp(*startTracer.img, tl, bl, br, tr, 10, 10);
+				}
+				// warp->Resample(dimT, dimR);
+			}
+        	if(warp) {
+				if(warp->xOffsets.size() != dimT || warp->yOffsets.size() != dimR) {
+					warp->Resample(dimT, dimR);
+				}
                 if(correctCorners) {
                     auto TL = tl, BL = bl, BR = br, TR = tr;
                     CorrectCorners(*startTracer.img, TL, BL, BR, TR, dimT);
-                    res = SampleGridWarped(*startTracer.img, TL, BL, BR, TR, dimT, dimR );
+                    res = SampleGridWarped(*startTracer.img, TL, BL, BR, TR, dimT, dimR, *warp );
                 } else {
                     auto& P = sourcePoints;
-                    res = SampleGridWarped(*startTracer.img, P[0], P[3], P[2], P[1], dimT, dimR );
+                    res = SampleGridWarped(*startTracer.img, P[0], P[3], P[2], P[1], dimT, dimR, *warp );
                 }
             } else {
                 res = SampleGrid(*startTracer.img, dimT, dimR, PerspectiveTransform(Rectangle(dimT, dimR, 0), sourcePoints));
@@ -882,7 +891,7 @@ namespace ZXing::DataMatrix {
     }
 
 
-    static DetectorResults DetectNew(const BitMatrix& image, bool tryHarder, bool tryRotate, bool scanWarped = false, bool correctCorners = false)
+    static DetectorResults DetectNew(const BitMatrix& image, bool tryHarder, bool tryRotate, Warp* warp = nullptr, bool tryToTraceWarp = false, bool correctCorners = false)
     {
 #ifdef PRINT_DEBUG
         LogMatrixWriter lmw(log, image, 1, "dm-log.pnm");
@@ -927,7 +936,7 @@ namespace ZXing::DataMatrix {
 			while (res = Scan(tracer, lines), res.isValid())
 				co_yield std::move(res);
 #else
-                if (auto res = Scan(tracer, lines, scanWarped, correctCorners); res.isValid()) {
+                if (auto res = Scan(tracer, lines, warp, tryToTraceWarp, correctCorners); res.isValid()) {
                     return res;
                 }
 #endif
@@ -1143,7 +1152,7 @@ namespace ZXing::DataMatrix {
 
 
 
-    static DetectorResult DetectCRPT(const BitMatrix& image, bool scanWarped = false, bool correctCorners = false)
+    static DetectorResult DetectCRPT(const BitMatrix& image, Warp* warp = nullptr, bool needToTraceWarp = false, bool correctCorners = false)
     {
 
         /*ResultPoint p1(0, 0);
@@ -1188,7 +1197,7 @@ namespace ZXing::DataMatrix {
             line2(img2, transitions[n1].from->x(), transitions[n1].from->y(), transitions[n1].to->x(), transitions[n1].to->y());
             line2(img2, transitions[n2].from->x(), transitions[n2].from->y(), transitions[n2].to->x(), transitions[n2].to->y());
 
-            res = DetectNew(img2, scanWarped, correctCorners);
+            res = DetectNew(img2, true, true, warp, needToTraceWarp, correctCorners);
             if (!res.isValid()) continue;
             if (Decode(res.bits()).isValid()) return res;
 
@@ -1207,7 +1216,7 @@ namespace ZXing::DataMatrix {
             if (i == 2) { correctBottle(img2, true, false);}
             if (i == 3) { correctBottle(img2, true, true);}
 
-            res = DetectNew(img2, scanWarped, correctCorners);
+            res = DetectNew(img2, true, true, warp, needToTraceWarp, correctCorners);
             if (!res.isValid()) continue;
             if (Decode(res.bits()).isValid()) return res;
 
@@ -1321,9 +1330,9 @@ namespace ZXing::DataMatrix {
 //    const int CommonMatrixDimensions[] = { 20, 22, 24, 26, 32, 36, 40, 44 };
 DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool tryRotate, bool isPure, DecoderResult& outDecoderResult)
 {
-	DetectorResult detRes;
 
 	#ifdef __cpp_impl_coroutine
+		DetectorResult detRes;
 		//OLD DETECTORS
 		detRes = DetectNew(image, tryHarder, tryRotate);
 		if (!detRes.isValid())
@@ -1357,7 +1366,6 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
 		co_return {};
 	#else
 		DetectorResult detRes;
-
 		//OLD DETECTORS
 		detRes = DetectNew(image, tryHarder, tryRotate);
 		if (!detRes.isValid())
@@ -1372,14 +1380,17 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
 		//#OLD DETECTORS
 
 		//OLD DETECTORS WITH MY SAMPLE GRID
-		detRes = DetectNew(image, tryHarder, tryRotate, true, true);
+
+		Warp warp;
+
+		detRes = DetectNew(image, tryHarder, tryRotate, &warp, true);
 		if (detRes.isValid()) {
 			outDecoderResult = Decode(detRes.bits());
 			if(outDecoderResult.isValid()) {
 				return detRes;
 			}
 		}
-		detRes = DetectCRPT(image.copy(), true, true);
+		detRes = DetectCRPT(image.copy(), &warp, true);
 
 		if (detRes.isValid()) {
 			outDecoderResult = Decode(detRes.bits());
@@ -1387,47 +1398,50 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
 				return detRes;
 			}
 		}
-		//OLD DETECTORS WITH MY SAMPLE GRID
+		//#OLD DETECTORS WITH MY SAMPLE GRID
 		return {};
 	#endif
 }
 
 const int CommonMatrixDimensions[] = { 20, 22, 24, 26, 32, 36, 40, 44 };
 
-    DetectorResults DetectDefined(const BitMatrix& image, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3, bool tryHarder, bool tryRotate, bool isPure, DecoderResult& outDecoderResult)
-    {
-        DetectorResult detRes;
+DetectorResults DetectDefined(const BitMatrix& image, const PointF& P0, const PointF& P1, const PointF& P2, const PointF& P3, bool tryHarder, bool tryRotate, bool isPure, DecoderResult& outDecoderResult)
+{
+	DetectorResult detRes;
 
-        //OLD DETECTORS
-        detRes = DetectNew(image, tryHarder, tryRotate);
-        if (!detRes.isValid())
-            detRes = DetectCRPT(image.copy());
+	//OLD DETECTORS
+	detRes = DetectNew(image, tryHarder, tryRotate);
+	if (!detRes.isValid())
+		detRes = DetectCRPT(image.copy());
 
-        if (detRes.isValid()) {
-            outDecoderResult = Decode(detRes.bits());
-            if(outDecoderResult.isValid()) {
-                return detRes;
-            }
-        }
-        //#OLD DETECTORS
+	if (detRes.isValid()) {
+		outDecoderResult = Decode(detRes.bits());
+		if(outDecoderResult.isValid()) {
+			return detRes;
+		}
+	}
+	//#OLD DETECTORS
 
-        //OLD DETECTORS WITH MY SAMPLE GRID
-        detRes = DetectNew(image, tryHarder, tryRotate, true, true);
-        if (detRes.isValid()) {
-            outDecoderResult = Decode(detRes.bits());
-            if(outDecoderResult.isValid()) {
-                return detRes;
-            }
-        }
-        detRes = DetectCRPT(image.copy(), true, true);
+	//OLD DETECTORS WITH MY SAMPLE GRID
 
-        if (detRes.isValid()) {
-            outDecoderResult = Decode(detRes.bits());
-            if(outDecoderResult.isValid()) {
-                return detRes;
-            }
-        }
-        //#OLD DETECTORS WITH MY SAMPLE GRID
+	Warp warp;
+
+	detRes = DetectNew(image, tryHarder, tryRotate, &warp, true);
+	if (detRes.isValid()) {
+		outDecoderResult = Decode(detRes.bits());
+		if(outDecoderResult.isValid()) {
+			return detRes;
+		}
+	}
+	detRes = DetectCRPT(image.copy(), &warp, true);
+
+	if (detRes.isValid()) {
+		outDecoderResult = Decode(detRes.bits());
+		if(outDecoderResult.isValid()) {
+			return detRes;
+		}
+	}
+	//#OLD DETECTORS WITH MY SAMPLE GRID
 
 
         //MY DETECTOR
@@ -1440,22 +1454,22 @@ const int CommonMatrixDimensions[] = { 20, 22, 24, 26, 32, 36, 40, 44 };
         // if (outDecoderResult.isValid()) {
         // 	return detRes;
         // }
-	detRes = DetectNew(image, tryHarder, tryRotate, true, false);
-	outDecoderResult = Decode(detRes.bits());
-	if (outDecoderResult.isValid()) {
-		return detRes;
-	}
+	// detRes = DetectNew(image, tryHarder, tryRotate, true, false);
+	// outDecoderResult = Decode(detRes.bits());
+	// if (outDecoderResult.isValid()) {
+	// 	return detRes;
+	// }
 
-        // detRes = DetectNew(image, tryHarder, tryRotate, true, true);
-        // outDecoderResult = Decode(detRes.bits());
-        // if (outDecoderResult.isValid()) {
-        // 	return detRes;
-        // }
-	detRes = DetectNew(image, tryHarder, tryRotate, true, true);
-	outDecoderResult = Decode(detRes.bits());
-	if (outDecoderResult.isValid()) {
-		return detRes;
-	}
+    //     // detRes = DetectNew(image, tryHarder, tryRotate, true, true);
+    //     // outDecoderResult = Decode(detRes.bits());
+    //     // if (outDecoderResult.isValid()) {
+    //     // 	return detRes;
+    //     // }
+	// detRes = DetectNew(image, tryHarder, tryRotate, true, true);
+	// outDecoderResult = Decode(detRes.bits());
+	// if (outDecoderResult.isValid()) {
+	// 	return detRes;
+	// }
 
         // // for (int dim = 8; dim <= 44; dim+=2) {
         // for (int dim : CommonMatrixDimensions) {
@@ -1511,7 +1525,10 @@ const int CommonMatrixDimensions[] = { 20, 22, 24, 26, 32, 36, 40, 44 };
         // 	}
         // }
         //#MY DETECTOR
-		detRes = SampleGridWarped(image, TL, BL, BR, TR, dim, dim);
+
+		auto warp = ComputeWarp(image, TL, BL, BR, TR, dim, dim);
+
+		detRes = SampleGridWarped(image, TL, BL, BR, TR, dim, dim, warp);
 		if (detRes.isValid()) {
 			outDecoderResult = Decode(detRes.bits());
 			if (outDecoderResult.isValid()) {
@@ -1524,8 +1541,8 @@ const int CommonMatrixDimensions[] = { 20, 22, 24, 26, 32, 36, 40, 44 };
 	}
 	//#MY DETECTOR
 
-        return {};
-    }
+    return {};
+}
 } // namespace ZXing::DataMatrix
 
 //DEBUG DRAW

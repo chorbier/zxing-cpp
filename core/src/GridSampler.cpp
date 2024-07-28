@@ -36,7 +36,7 @@ PointT<U> Abs(const PointT<U>& A)
 	return PointT<U>(std::abs(A.x), std::abs(A.y));
 }
 
-bool pixelTraversal(const BitMatrix& img, const PointF& p0, const PointF& p1, bool searchFor, PointF& outResultPoint) {
+bool pixelTraversal(const BitMatrix& img, const PointF& p0, const PointF& p1, bool searchFor, PointF& outResultPoint, int traceTollerance = 0) {
 
 	PointF rd = p1 - p0;
 	PointI p(p0);
@@ -44,6 +44,7 @@ bool pixelTraversal(const BitMatrix& img, const PointF& p0, const PointF& p1, bo
 	PointI stp(rd.x > 0 ? 1 : (rd.x < 0 ? -1 : 0), rd.y > 0 ? 1 : (rd.y < 0 ? -1 : 0));
 	PointF delta = Min(rdinv * stp, 1.0);
 	PointF t_max = Abs((p + PointF(Max(stp, 0)) - p0) * rdinv);
+	int tol = traceTollerance;
 
 	float prevNext_t = 0;
 	bool startOutside = !img.isIn(p);
@@ -57,8 +58,12 @@ bool pixelTraversal(const BitMatrix& img, const PointF& p0, const PointF& p1, bo
 
 		if (img.isIn(p)) {
 			if (img.get(p) == searchFor) {
-				outResultPoint = (prevNext_t * rd) + p0;
-				return true;
+				if(tol-- == 0) {
+					outResultPoint = (prevNext_t * rd) + p0;
+					return true;
+				}
+			} else {
+				tol = traceTollerance;
 			}
 			startOutside = false;
 		} else {
@@ -72,7 +77,7 @@ bool pixelTraversal(const BitMatrix& img, const PointF& p0, const PointF& p1, bo
 		prevNext_t = next_t;
 	}
 
-	outResultPoint = outResultPoint = (prevNext_t * rd) + p0;
+	outResultPoint = (prevNext_t * rd) + p0;
 	return false;
 }
 
@@ -192,12 +197,49 @@ void CorrectCorners(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft,
 	}
 }
 
-Warp ComputeWarp(const BitMatrix& image, const ZXing::ROI& roi, float subpixelOffset = 0.5)
+PointF Interp(const std::vector<PointF>& ar, float alpha)
 {
+	if (alpha <= 0.0) return *ar.begin();
+	if (alpha >= 1.0) return *(ar.end() - 1);
+	float flIndex = float(ar.size() - 1) * alpha;
+	int i = int(flIndex);
+	float frac = (flIndex - float(i));
+	return frac * ar.at(i) + (1.0 - frac) * ar.at(i + 1);
+}
+
+void Warp::Resample(int sizeX, int sizeY)
+{
+	if(sizeX == xOffsets.size() && sizeY == yOffsets.size()) return;
+	std::vector<PointF> res;
+	if(sizeX != yOffsets.size()) {
+		res.resize(sizeX);
+		float newSizeXF = sizeX - 1;
+		for(int i = 0; i < sizeX; i++) {
+			float alpha = float(i) / newSizeXF;
+			res[i] = Interp(xOffsets, alpha);
+		}
+		xOffsets = res;
+	}
+	if(sizeY != yOffsets.size()) {
+		res.resize(sizeY);
+		float newSizeYF = sizeY - 1;
+		for(int i = 0; i < sizeY; i++) {
+			float alpha = float(i) / newSizeYF;
+			res[i] = Interp(yOffsets, alpha);
+		}
+		yOffsets = res;
+	}
+}
+
+
+Warp ComputeWarp(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix, float subpixelOffset)
+{
+	int x0 = 0, x1 = width, y0 = 0, y1 = height;
+
 	float marginWidth = image.width() * 0.05;
 	PointF traceResult;
 
-	auto&& [x0, x1, y0, y1, mod2Pix] = roi;
+	// auto&& [x0, x1, y0, y1, mod2Pix] = roi;
 
 	Warp warp(x1 - x0, y1 - y0);
 
@@ -234,6 +276,34 @@ Warp ComputeWarp(const BitMatrix& image, const ZXing::ROI& roi, float subpixelOf
 		}
 	};
 
+	// int numMultitraces = 5;
+
+	// if(gridSize < 26) {
+	// 	numMultitraces = 3;
+	// }
+
+	// for(int i = 0; i < numMultitraces; i++) {
+		
+	// 	float x = 
+
+	// 	auto startP = mod2Pix(centered(PointI{ x, y1 - 1 }));
+	// 	auto endP = mod2Pix(centered(PointI{ x, y0 }));
+
+	// }
+
+	// for (int x = x0; x < x1; ++x) {
+	// 	auto startP = mod2Pix(centered(PointI{ x, y1 - 1 }));
+	// 	auto endP = mod2Pix(centered(PointI{ x, y0 }));
+
+	// 	CalcFor(startP, endP, warp.xOffsets, x - x0, y1 - y0);
+	// }
+
+	// for (int y = y0; y < y1; ++y) {
+	// 	auto startP = mod2Pix(centered(PointI{ x0, y }));
+	// 	auto endP = mod2Pix(centered(PointI{ x1 - 1, y }));
+
+	// 	CalcFor(startP, endP, warp.yOffsets, y - y0, x1 - x0);
+	// }
 
 
 	for (int x = x0; x < x1; ++x) {
@@ -287,6 +357,12 @@ Warp ComputeWarp(const BitMatrix& image, const ZXing::ROI& roi, float subpixelOf
 		}
 	};
 	return std::move(warp);
+}
+
+Warp ComputeWarp(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, PointF& bottomRight, PointF& topRight, int width, int height, float subpixelOffset)
+{
+	        return ComputeWarp(image, width, height,
+                          {Rectangle(width, height, 0.5), {topLeft, topRight, bottomRight, bottomLeft}}, subpixelOffset);
 }
 
 //Returns nessesary clockwise rotations TODO Merge this trace clusterfuck with warp calculation
@@ -379,24 +455,14 @@ int FindRotation(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, Po
 	}
 }
 
-PointF Interp(const std::vector<PointF>& ar, float alpha)
-{
-	if (alpha <= 0.0) return *ar.begin();
-	if (alpha >= 1.0) return *(ar.end() - 1);
-	float flIndex = float(ar.size() - 1) * alpha;
-	int i = int(flIndex);
-	float frac = (flIndex - float(i));
-	return frac * ar.at(i) + (1.0 - frac) * ar.at(i + 1);
-}
-
 DetectorResult SampleGrid(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix)
 {
 	return SampleGrid(image, width, height, {ROI{0, width, 0, height, mod2Pix}});
 }
 
-DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix)
+DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const Warp& warp, const PerspectiveTransform& mod2Pix)
 {
-	return SampleGridWarped(image, width, height, {ROI{0, width, 0, height, mod2Pix}});
+	return SampleGridWarped(image, width, height, warp, {ROI{0, width, 0, height, mod2Pix}});
 }
 
 DetectorResult SampleGrid(const BitMatrix& image, int width, int height, const ROIs& rois)
@@ -453,7 +519,7 @@ DetectorResult SampleGrid(const BitMatrix& image, int width, int height, const R
 }
 
 
-DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const ROIs& rois)
+DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, const Warp& warp, const ROIs& rois)
 {
 #ifdef PRINT_DEBUG
 	LogMatrix log;
@@ -482,12 +548,14 @@ DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, c
 	for (auto& roi : rois) {
 		auto&& [x0, x1, y0, y1, mod2Pix] = roi;
 
-		Warp warp = ComputeWarp(image, roi);
+		// Warp warp = ComputeWarp(image, roi);
 
 		for (int y = y0; y < y1; ++y) {
-			auto offsetY = Interp(warp.yOffsets, float(y) / float(y1 - 1));
+			// auto offsetY = Interp(warp.yOffsets, float(y) / float(y1 - 1));
+			auto offsetY = warp.yOffsets[y - y0];
 			for (int x = x0; x < x1; ++x) {
-				auto offsetX = Interp(warp.xOffsets, float(x) / float(x1 - 1));
+				// auto offsetX = Interp(warp.xOffsets, float(x) / float(x1 - 1));
+				auto offsetX = warp.xOffsets[x - x0];
 				auto p = mod2Pix(centered(PointI{x, y}));
 
 				p += offsetX;
