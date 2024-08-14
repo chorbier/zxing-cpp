@@ -86,5 +86,29 @@ void drawDebugImageWithLines(const BitMatrix& image, const std::string& postfix,
 
 }
 
+void drawDebugImageWithPoints(const BitMatrix& image, const std::string& postfix, const std::vector<double>& inPoints, int radius ) {
+
+	cv::Mat img(image.width(), image.height(), CV_8UC3);
+	BitMatrixToMat(image, img);
+
+	int pointsCount = inPoints.size() / 2;
+
+	cv::Scalar color1(0, 0, 255);
+	cv::Scalar color2(0, 255, 0);
+	int half = pointsCount / 2;
+	for(int i = 0; i < pointsCount; i++) {
+		cv::circle(img, {inPoints[i * 2], inPoints[i * 2 + 1]}, radius, color1);
+	}
+
+	auto name = std::to_string(DebugFileIndex++);
+	name = std::string(4 - name.length(), '0') + name;
+	if(postfix.length() > 0) {
+		name+="_"+postfix;
+	}
+
+	cv::imwrite(debugOutputFolder / (name + ".jpg"), img);
+
+}
+
 }
 

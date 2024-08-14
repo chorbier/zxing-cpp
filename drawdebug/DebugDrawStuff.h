@@ -9,6 +9,6 @@ static fs::path debugOutputFilepath;
 
 void drawDebugImage(const class BitMatrix& image, const std::string& postfix);
 void drawDebugImageWithLines(const class BitMatrix& image, const std::string& postfix, const std::vector<double>& corners);
-
+void drawDebugImageWithPoints(const BitMatrix& image, const std::string& postfix, const std::vector<double>& inPoints, int radius = 0);
 }
 
