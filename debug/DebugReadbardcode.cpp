@@ -283,6 +283,7 @@ int main(int argc, char *argv[])
     cv::glob(folder, filenames, false);
 
 	int cnt = 0;
+	int cntTotal = 0;
 
 	double totalTime = 0;
 	double imreadTime = 0;
@@ -331,6 +332,8 @@ int main(int argc, char *argv[])
 				image_candidate.release();
 			}
 		}
+		cntTotal++;
+		std::cout << "Done " << cntTotal << "(" << cnt << ")" << " of " <<  filenames.size() << "\t\r" << std::flush;
 	}
 
 	totalTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();

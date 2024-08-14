@@ -862,7 +862,7 @@ namespace ZXing::DataMatrix {
             DetectorResult res;
 			if(tryToTraceWarp && warp) {
 				if(!warp->isValid() || warp->xOffsets.size() > dimT || warp->yOffsets.size() > dimR) {
-					*warp = ComputeWarp(*startTracer.img, tl, bl, br, tr, 10, 10);
+					*warp = ComputeWarp(*startTracer.img, tl, bl, br, tr, 5, 5, dimT);
 				}
 				// warp->Resample(dimT, dimR);
 			}
@@ -1384,6 +1384,7 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
 		Warp warp;
 
 		detRes = DetectNew(image, tryHarder, tryRotate, &warp, true);
+
 		if (detRes.isValid()) {
 			outDecoderResult = Decode(detRes.bits());
 			if(outDecoderResult.isValid()) {
@@ -1526,7 +1527,7 @@ DetectorResults DetectDefined(const BitMatrix& image, const PointF& P0, const Po
         // }
         //#MY DETECTOR
 
-		auto warp = ComputeWarp(image, TL, BL, BR, TR, dim, dim);
+		auto warp = ComputeWarp(image, TL, BL, BR, TR, dim, dim, dim);
 
 		detRes = SampleGridWarped(image, TL, BL, BR, TR, dim, dim, warp);
 		if (detRes.isValid()) {

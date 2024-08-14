@@ -7,6 +7,7 @@
 
 #include "GridSampler.h"
 #include <cfloat>
+// #include "DebugDrawStuff.h"
 #ifdef PRINT_DEBUG
 #include "LogMatrix.h"
 #include "BitMatrixIO.h"
@@ -199,12 +200,14 @@ void CorrectCorners(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft,
 
 PointF Interp(const std::vector<PointF>& ar, float alpha)
 {
-	if (alpha <= 0.0) return *ar.begin();
-	if (alpha >= 1.0) return *(ar.end() - 1);
+	// if (alpha <= 0.0) return *ar.data();
+	// if (alpha >= 1.0) return ar[ar.size() - 1];
+	if (alpha >= 1.0) return *ar.data();
+	if (alpha <= 0.0) return ar[ar.size() - 1];
 	float flIndex = float(ar.size() - 1) * alpha;
 	int i = int(flIndex);
 	float frac = (flIndex - float(i));
-	return frac * ar.at(i) + (1.0 - frac) * ar.at(i + 1);
+	return (1.0 - frac) * ar.at(i) + frac * ar.at(i + 1);
 }
 
 void Warp::Resample(int sizeX, int sizeY)
@@ -218,7 +221,8 @@ void Warp::Resample(int sizeX, int sizeY)
 			float alpha = float(i) / newSizeXF;
 			res[i] = Interp(xOffsets, alpha);
 		}
-		xOffsets = res;
+		xOffsets.resize(sizeX);
+		std::copy(res.data(), &res[sizeX - 1], xOffsets.data());
 	}
 	if(sizeY != yOffsets.size()) {
 		res.resize(sizeY);
@@ -227,16 +231,16 @@ void Warp::Resample(int sizeX, int sizeY)
 			float alpha = float(i) / newSizeYF;
 			res[i] = Interp(yOffsets, alpha);
 		}
-		yOffsets = res;
+		yOffsets.resize(sizeY);
+		std::copy(res.data(), &res[sizeY - 1], yOffsets.data());
 	}
 }
 
 
-Warp ComputeWarp(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix, float subpixelOffset)
+Warp ComputeWarp(const BitMatrix& image, int width, int height, int predictedSize, const PerspectiveTransform& mod2Pix, float subpixelOffset)
 {
 	int x0 = 0, x1 = width, y0 = 0, y1 = height;
 
-	float marginWidth = image.width() * 0.05;
 	PointF traceResult;
 
 	// auto&& [x0, x1, y0, y1, mod2Pix] = roi;
@@ -245,9 +249,46 @@ Warp ComputeWarp(const BitMatrix& image, int width, int height, const Perspectiv
 
 	float gridSize = x1 - x0;
 
-	float offsetMul = subpixelOffset / gridSize;
+	// float offsetMul = subpixelOffset / predictedSize;
+	float offsetMul = 0.0;
 
-	auto CalcFor = [&](const PointF& startP, const PointF& endP, std::vector<PointF>& outAr, int id, float addLen = 0) {
+	// float marginWidth = image.width() * 0.05;
+	float marginWidth = distance(mod2Pix({0, 0}), mod2Pix({x1, 0})) * 0.15;
+
+	// std::vector<double> debugDrawPoints;
+	// debugDrawPoints.reserve(width * 2 * 3 + height * 2 * 3);
+
+	// auto CalcFor = [&](const PointF& startP, const PointF& endP, std::vector<PointF>& outAr, int id, float addLen = 0) {
+
+	struct TraceResult {
+		float len;
+		PointF offset;
+		bool isValid = false;
+	};
+
+	auto lenSq = [](const PointF& v) -> float {
+		return v.x * v.x + v.y * v.y;
+	};
+
+	auto findBest = [](const TraceResult* results, PointF& outResult, int cnt = 3) -> bool {
+		int resI = -1;
+		float minLen = INFINITY;
+		for(int i = 0; i < cnt; i++) {
+			if(results[i].isValid && results[i].len < minLen) {
+				minLen = results[i].len;
+				resI = i;
+			}
+		}
+		if(resI != -1) {
+			outResult = results[resI].offset;
+			return true;
+		} 
+		return false;
+	};
+
+	// bool enableDebug = true;
+
+	auto CalcFor = [&](const PointF& startP, const PointF& endP, TraceResult& outRes) {
 
 		bool success = false;
 
@@ -265,38 +306,85 @@ Warp ComputeWarp(const BitMatrix& image, int width, int height, const Perspectiv
 			if (success) {
 				//auto Result = startPOffseted + (distance(startPOffseted, traceResult) + SubPixelOffset) * dir - startP;
 				//auto Result = traceResult - startP + SubPixelOffset * dir;
+				// if(enableDebug) {
+				// debugDrawPoints.push_back(traceResult.x);
+				// debugDrawPoints.push_back(traceResult.y);
+				// }
 
-				auto Result = traceResult - startP + offsetMul * (endP - startP);
+				PointF TraveledPath = traceResult - startP ;
+
+				auto Result = TraveledPath + offsetMul * (endP - startP);
 				//auto Result = (distance(startPOffseted, PointF(traceResult)) + SubPixelOffset) * dir;
 				//calculatedPoints.push_back(startP + Result);
 
-				outAr[id] = Result;
+				outRes = {
+					lenSq(traceResult - startPOffseted),
+					Result,
+					true
+				};
+
+				// outAr[id] = Result;
 				return;
 			}
 		}
+		outRes.isValid = false;
 	};
 
-	// int numMultitraces = 5;
+	TraceResult resultBuf[3];
 
-	// if(gridSize < 26) {
-	// 	numMultitraces = 3;
-	// }
+	// enableDebug = true;
 
-	// for(int i = 0; i < numMultitraces; i++) {
+	float primaryAxisCorrection = float(width ) / float(predictedSize);
+	PointF Start(0, y1 - 1), End(0, y0);
+
+	for (int x = x0; x < x1; ++x) {
+
+		// float xo = (x == x0) ? x : ((x == x1 - 1) ? (x - 2.0 * primaryAxisCorrection) : (x - primaryAxisCorrection));
+		float xo = (x == x0) ? x : ((x == x1 - 1) ? (x - 2.0 * primaryAxisCorrection) : (x - primaryAxisCorrection));
 		
-	// 	float x = 
+		for(int j = 0; j < 3 ; j++) {
+			// Start.x = End.x = x + xo;
+			Start.x = End.x = xo;
 
-	// 	auto startP = mod2Pix(centered(PointI{ x, y1 - 1 }));
-	// 	auto endP = mod2Pix(centered(PointI{ x, y0 }));
+			auto startP = mod2Pix(Start);
+			auto endP = mod2Pix(End);
 
-	// }
+			// debugDrawPoints.push_back(startP.x);
+			// debugDrawPoints.push_back(startP.y);
 
-	// for (int x = x0; x < x1; ++x) {
-	// 	auto startP = mod2Pix(centered(PointI{ x, y1 - 1 }));
-	// 	auto endP = mod2Pix(centered(PointI{ x, y0 }));
+			CalcFor(startP, endP, resultBuf[j]);
+			xo += primaryAxisCorrection;
+		}
+		if(!findBest(resultBuf, warp.xOffsets[x - x0])) {
+			// warp.xOffsets[x - x0] = centered(PointF{ x , y1 - 1 });
+			warp.xOffsets[x - x0] = {0.0, 0.0};
+		}
+	}
 
-	// 	CalcFor(startP, endP, warp.xOffsets, x - x0, y1 - y0);
-	// }
+	// enableDebug = false;
+
+	primaryAxisCorrection = float(height) / float(predictedSize);
+
+	Start = {x0, 0}; End = {x1 - 1, 0};
+
+	for (int y = y0; y < y1; ++y) {
+
+		float yo = (y == y0) ? y : ((y == y1 - 1) ? (y - 2.0 * primaryAxisCorrection) : (y - primaryAxisCorrection));
+		
+		for(int j = 0; j < 3 ; j++) {
+			Start.y = End.y = yo;
+
+			auto startP = mod2Pix(Start);
+			auto endP = mod2Pix(End);
+
+			CalcFor(startP, endP, resultBuf[j]);
+			yo += primaryAxisCorrection;
+		}
+		if(!findBest(resultBuf, warp.yOffsets[y - y0])) {
+			// warp.yOffsets[y - y0] = mod2Pix(centered(PointF{ x0, y }));
+			warp.yOffsets[y - y0] = {0.0, 0.0};
+		}
+	}
 
 	// for (int y = y0; y < y1; ++y) {
 	// 	auto startP = mod2Pix(centered(PointI{ x0, y }));
@@ -304,21 +392,6 @@ Warp ComputeWarp(const BitMatrix& image, int width, int height, const Perspectiv
 
 	// 	CalcFor(startP, endP, warp.yOffsets, y - y0, x1 - x0);
 	// }
-
-
-	for (int x = x0; x < x1; ++x) {
-		auto startP = mod2Pix(centered(PointI{ x, y1 - 1 }));
-		auto endP = mod2Pix(centered(PointI{ x, y0 }));
-
-		CalcFor(startP, endP, warp.xOffsets, x - x0, y1 - y0);
-	}
-
-	for (int y = y0; y < y1; ++y) {
-		auto startP = mod2Pix(centered(PointI{ x0, y }));
-		auto endP = mod2Pix(centered(PointI{ x1 - 1, y }));
-
-		CalcFor(startP, endP, warp.yOffsets, y - y0, x1 - x0);
-	}
 
 	auto Filter = [&](std::vector<PointF>& outAr) {
 
@@ -356,13 +429,16 @@ Warp ComputeWarp(const BitMatrix& image, int width, int height, const Perspectiv
 			outAr[j] = arCpy[medianWindow[halfWindowSize].id];
 		}
 	};
+
+	// drawDebugImageWithPoints(image, "", debugDrawPoints, 2);
+
 	return std::move(warp);
 }
 
-Warp ComputeWarp(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, PointF& bottomRight, PointF& topRight, int width, int height, float subpixelOffset)
+Warp ComputeWarp(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, PointF& bottomRight, PointF& topRight, int width, int height, int predictedSize, float subpixelOffset)
 {
-	        return ComputeWarp(image, width, height,
-                          {Rectangle(width, height, 0.5), {topLeft, topRight, bottomRight, bottomLeft}}, subpixelOffset);
+	        return ComputeWarp(image, width, height, predictedSize,
+            	{Rectangle(width - 1, height - 1, 0.0), {topLeft, topRight, bottomRight, bottomLeft}}, subpixelOffset);
 }
 
 //Returns nessesary clockwise rotations TODO Merge this trace clusterfuck with warp calculation
@@ -529,7 +605,12 @@ DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, c
 	if (width <= 0 || height <= 0)
 		return {};
 
-
+	// std::vector<double> debugDrawPoints;
+	// debugDrawPoints.reserve(width * height);
+	// auto AddDebug = [&](const PointF& P) {
+	// 	debugDrawPoints.push_back(P.x);
+	// 	debugDrawPoints.push_back(P.y);
+	// };
 
 	for (auto&& [x0, x1, y0, y1, mod2Pix] : rois) {
 		// To deal with remaining examples (see #251 and #267) of "numercial instabilities" that have not been
@@ -558,8 +639,12 @@ DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, c
 				auto offsetX = warp.xOffsets[x - x0];
 				auto p = mod2Pix(centered(PointI{x, y}));
 
+				// AddDebug(p);
+
 				p += offsetX;
 				p += offsetY;
+
+				// AddDebug(p);
 
 				// Due to a "numerical instability" in the PerspectiveTransform generation/application it has been observed
 				// that even though all boundary grid points get projected inside the image, it can still happen that an
@@ -591,6 +676,8 @@ DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, c
 
 		return PointI();
 	};
+
+	// drawDebugImageWithPoints(image, "", debugDrawPoints);
 
 	return {std::move(res),
 			{projectCorner({0, 0}), projectCorner({width, 0}), projectCorner({width, height}), projectCorner({0, height})}};
