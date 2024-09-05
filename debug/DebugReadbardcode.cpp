@@ -278,7 +278,7 @@ int main(int argc, char *argv[])
 						   .setEanAddOnSymbol(ZXing::EanAddOnSymbol::Ignore);
 
     // std::string folder("/home/chorbier/dm-tests/real");
-    std::string folder("/home/chorbier/dm-tests/generated_bottle");
+    std::string folder("/home/chorbier/dm-tests/cropped_no_padding");
     std::vector<cv::String> filenames;
     cv::glob(folder, filenames, false);
 

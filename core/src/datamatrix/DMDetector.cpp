@@ -875,8 +875,7 @@ namespace ZXing::DataMatrix {
                     CorrectCorners(*startTracer.img, TL, BL, BR, TR, dimT);
                     res = SampleGridWarped(*startTracer.img, TL, BL, BR, TR, dimT, dimR, *warp );
                 } else {
-                    auto& P = sourcePoints;
-                    res = SampleGridWarped(*startTracer.img, P[0], P[3], P[2], P[1], dimT, dimR, *warp );
+					res = SampleGridWarped(*startTracer.img, dimT, dimR, *warp, PerspectiveTransform(Rectangle(dimT, dimR, 0), sourcePoints));
                 }
             } else {
                 res = SampleGrid(*startTracer.img, dimT, dimR, PerspectiveTransform(Rectangle(dimT, dimR, 0), sourcePoints));
