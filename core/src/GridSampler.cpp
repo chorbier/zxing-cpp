@@ -431,7 +431,7 @@ Warp ComputeWarp(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, Po
 int FindRotation(const BitMatrix& image, PointF& topLeft, PointF& bottomLeft, PointF& bottomRight, PointF& topRight, int gridSize)
 {
 	PerspectiveTransform mod2Pix = {Rectangle(gridSize, gridSize, 0.5), {topLeft, topRight, bottomRight, bottomLeft}};
-	
+
 	float marginWidth = image.width() * 0.05;
 	PointF traceResult;
 

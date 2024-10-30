@@ -6,7 +6,7 @@ echo ========= Create project structure
 cmake -S../../ -B_builds -GXcode \
     -DCMAKE_SYSTEM_NAME=iOS \
     "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
     -DCMAKE_INSTALL_PREFIX=`pwd`/_install \
     -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO \
     -DBUILD_UNIT_TESTS=NO \
@@ -21,7 +21,7 @@ xcodebuild -project _builds/ZXing.xcodeproj build \
     -parallelizeTargets \
     -configuration Release \
     -hideShellScriptEnvironment \
-    -sdk iphonesimulator
+    -sdk iphonesimulator -arch x86_64 -arch arm64
 
 echo ========= Build the sdk for iOS
 xcodebuild -project _builds/ZXing.xcodeproj build \
@@ -35,37 +35,4 @@ echo ========= Create the xcframework
 xcodebuild -create-xcframework \
     -framework ./_builds/core/Release-iphonesimulator/ZXing.framework \
     -framework ./_builds/core/Release-iphoneos/ZXing.framework \
-    -output ZXingCpp.xcframework
-
-
-cmake -S../ -B_builds -GXcode \
-    -DCMAKE_SYSTEM_NAME=iOS \
-    "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-    -DCMAKE_INSTALL_PREFIX=`pwd`/_install \
-    -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO \
-    -DBUILD_UNIT_TESTS=NO \
-    -DBUILD_BLACKBOX_TESTS=NO \
-    -DBUILD_EXAMPLES=NO \
-    -DBUILD_APPLE_FRAMEWORK=YES
-
-
-
-xcodebuild -project _builds/DMTX.xcodeproj build \
-    -target dmtx \
-    -parallelizeTargets \
-    -configuration Release \
-    -hideShellScriptEnvironment \
-    -sdk iphoneos
-
-xcodebuild -project _builds/DMTX.xcodeproj build \
-    -target dmtx \
-    -parallelizeTargets \
-    -configuration Release \
-    -hideShellScriptEnvironment \
-    -sdk iphonesimulator
-
-xcodebuild -create-xcframework \
-    -framework ./_builds/Release-iphonesimulator/dmtx.framework \
-    -framework ./_builds/Release-iphoneos/dmtx.framework   \
-    -output DMTX.xcframework
+    -output ZXing.xcframework
