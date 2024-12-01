@@ -31,6 +31,8 @@ class ResultPoint;
  */
 bool DetectWhiteRect(const BitMatrix& image, int initSize, int x, int y, ResultPoint& p0, ResultPoint& p1,
 					 ResultPoint& p2, ResultPoint& p3);
+bool DetectWhiteRect(const BitMatrix& image, int initSize, int x, int y, ResultPoint& p0, ResultPoint& p1,
+					 ResultPoint& p2, ResultPoint& p3, int tolerance);
 bool DetectWhiteRect(const BitMatrix& image, ResultPoint& p0, ResultPoint& p1, ResultPoint& p2, ResultPoint& p3);
 
 } // ZXing
