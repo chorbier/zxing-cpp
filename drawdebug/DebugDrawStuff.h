@@ -1,5 +1,6 @@
 #pragma once
 #include <filesystem>
+#include <vector>
 namespace fs = std::filesystem;
 
 namespace ZXing {
