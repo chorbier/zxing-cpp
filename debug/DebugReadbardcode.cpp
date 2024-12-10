@@ -253,7 +253,7 @@ std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, 
 	try {
 		zxing_results = std::make_unique<Results>(
 			// readbarcodescrpt_detector_v1_samplegridv1(ImageViewFromMat(image), pointFs[0], pointFs[1], pointFs[2], pointFs[3], hints));
-			readbarcodescrpt_samplegridv1(ImageViewFromMat(image), hints));
+			readbarcodescrpt_samplegridv1(ImageViewFromMat(image), hints, true));
 	} catch (...) {
 		zxing_results = nullptr;
 	}
@@ -310,6 +310,7 @@ int main(int argc, char *argv[])
 				bool undetected = true;
 				if (zxing_results_ptr != nullptr && zxing_results_ptr->size() >= 1) {
 					for (const auto& result : *zxing_results_ptr) {
+						if(!result.isValid()) continue;
 						// std::cout << fileName << std::endl << "Barcode text: " << result.text() << std::endl;
 						undetected = false;
 						// cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_cv);

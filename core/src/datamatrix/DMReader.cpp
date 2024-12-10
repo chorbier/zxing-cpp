@@ -80,8 +80,6 @@ Result DMCRPTReader::decode(const BinaryBitmap& image) const
 	DecoderResult decoderResult;
 	auto detectorResult = DetectSamplegridV1(*binImg, _hints.tryHarder(), _hints.tryRotate(), _hints.isPure(), decoderResult);
 
-	if (!detectorResult.isValid()) return {};
-
 	return Result(std::move(decoderResult), std::move(detectorResult).position(), BarcodeFormat::DataMatrix);
 }
 #ifdef __cpp_impl_coroutine

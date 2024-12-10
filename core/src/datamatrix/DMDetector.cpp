@@ -436,7 +436,7 @@ namespace ZXing::DataMatrix {
         return SampleGrid(image, *topLeft, *bottomLeft, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
     }
 
-    static DetectorResult DetectOldWithOffsets(const BitMatrix& image)
+    static DetectorResult DetectOldWithOffsets(const BitMatrix& image, DecoderResult& outDecoderResult)
     {
         ResultPoint pointA, pointB, pointC, pointD;
         if (!DetectWhiteRect(image, pointA, pointB, pointC, pointD))
@@ -568,11 +568,11 @@ namespace ZXing::DataMatrix {
                 return SampleGrid(image, topLeft, bottomLeft, bottomRight, topRight, dimensionTop, dimensionRight);
             };
 
-            res = sgDebug(image, *topLeft, *bottomLeft, *bottomRight + DirBottomLR, *topRight + DirTopLR, dimensionTop, dimensionRight);
-            if(Decode(res.bits()).isValid()) return res;
+            res = SampleGrid(image, *topLeft, *bottomLeft, *bottomRight + DirBottomLR, *topRight + DirTopLR, dimensionTop, dimensionRight);
+            if(outDecoderResult = Decode(res.bits()); outDecoderResult.isValid()) return res;
 
-            res = sgDebug(image, *topLeft + DirLeftBT, *bottomLeft, *bottomRight, *topRight + DirRightBT, dimensionTop, dimensionRight);
-            if(Decode(res.bits()).isValid()) return res;
+            res = SampleGrid(image, *topLeft + DirLeftBT, *bottomLeft, *bottomRight, *topRight + DirRightBT, dimensionTop, dimensionRight);
+            if(outDecoderResult = Decode(res.bits()); outDecoderResult.isValid()) return res;
 
 
             correctedTopRight = CorrectTopRight(image, *bottomLeft, *bottomRight, *topLeft, *topRight, dimension);
@@ -580,11 +580,11 @@ namespace ZXing::DataMatrix {
             DirTopLR = dimInv * (correctedTopRight - *topLeft);
             DirRightBT = dimInv * (correctedTopRight - *bottomRight);
 
-            res = sgDebug(image, *topLeft - DirTopLR, *bottomLeft - DirBottomLR, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
-            if(Decode(res.bits()).isValid()) return res;
+            res = SampleGrid(image, *topLeft - DirTopLR, *bottomLeft - DirBottomLR, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
+            if(outDecoderResult = Decode(res.bits()); outDecoderResult.isValid()) return res;
 
-            res = sgDebug(image, *topLeft, *bottomLeft - DirLeftBT, *bottomRight - DirRightBT, correctedTopRight, dimensionTop, dimensionRight);
-            if(Decode(res.bits()).isValid()) return res;
+            res = SampleGrid(image, *topLeft, *bottomLeft - DirLeftBT, *bottomRight - DirRightBT, correctedTopRight, dimensionTop, dimensionRight);
+            if(outDecoderResult = Decode(res.bits()); outDecoderResult.isValid()) return res;
 
             // ExtendSide(image, *bottomLeft, bottomRightCorrected, *topLeft, topRightCorrected, dimension);
             // correct top right point to match the white module
@@ -602,9 +602,13 @@ namespace ZXing::DataMatrix {
             // if ((dimensionCorrected & 0x01) == 1) {
             //     dimensionCorrected++;
             // }
+            res = SampleGrid(image, *topLeft, *bottomLeft, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
+            outDecoderResult = Decode(res.bits());
+            return res;
         }
 
         // DetectorResult res = SampleGrid(image, *topLeft, *bottomLeft, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
+
         return {};
     }
 
@@ -1134,9 +1138,9 @@ namespace ZXing::DataMatrix {
 
 
 
-    void correctBottle(BitMatrix& img, bool horizontal, bool inverse) {
+    void correctBottle(const BitMatrix& img, BitMatrix& outImg, bool horizontal, bool inverse) {
 
-        BitMatrix img2 = img.copy();
+        outImg = img.copy();
 
         int width, height;
         bool point;
@@ -1167,7 +1171,7 @@ namespace ZXing::DataMatrix {
                     if (newx >= width) newx = width - 1;
                     if (newx < 0) newx = 0;
                     newy = y;
-                    img2.set(newx, newy, point);
+                    outImg.set(newx, newy, point);
                 }
 
             }
@@ -1192,7 +1196,7 @@ namespace ZXing::DataMatrix {
                     if (newy >= height) newy = height - 1;
                     if (newy < 0) newy = 0;
                     newx = x;
-                    img2.set(newx, newy, point);
+                    outImg.set(newx, newy, point);
                 }
 
             }
@@ -1201,12 +1205,70 @@ namespace ZXing::DataMatrix {
         }
 
 
-        img = img2.copy();
+        // img = img2.copy();
 
     }
 
 
+    void rotate(const BitMatrix& img, BitMatrix& outImg, const PointF& sincos) {
+        int  rows, cols,r,c,r1,c1,k,s;
 
+        rows = img.width();
+        cols = img.height();
+
+        int centRow = rows / 2;
+        int centCol = cols / 2;
+
+        float maxRow = centRow + (rows - centRow) * sincos.x - (0 - centCol) * sincos.y;
+        float maxCol = centCol + (cols - centCol) * sincos.x + (rows - centRow) * sincos.y;
+        float minRow = centRow + (0 - centRow) * sincos.x - (cols - centCol) * sincos.y;
+        float minCol = centCol + (0 - centCol) * sincos.x + (0 - centRow) * sincos.y;
+        r = maxRow - minRow + 1;
+        c = maxCol - minCol + 1;
+        if (r < rows) r1 = rows; else r1 = r;
+        if (c < cols) c1 = cols; else c1 = c;
+        s = r1 / 40;
+        if (s < 20) s = 20;
+
+        outImg = BitMatrix(r1, c1);
+
+        for (int i = 0; i < r1; i++)
+        {
+            for (int j = 0; j < c1; j++)
+            {
+                if ((i < rows) && (j < cols))
+                {
+                    float x = centRow + (i - centRow) * sincos.x - (j - centCol) * sincos.y;
+                    float y = centCol + (j - centCol) * sincos.x + (i - centRow) * sincos.y;
+                    int newI = x - minRow;
+                    int newJ = y - minCol;
+
+                    if ((newI >= 0) && (newI < r1) && (newJ >= 0) && (newJ < c1)) {
+                        outImg.set(newI, newJ, img.get(i, j));
+
+                        try {
+                            if (newJ > 1 && outImg.get(newI, newJ - 1) == false)
+                            {
+                                if (i > 0 && j > 0) {
+                                    k = 0;
+                                    while ((outImg.get(newI, newJ - 1) == false) && (newJ > 1) && (k < s))
+                                    {
+                                        newJ--; k++;
+                                        if (outImg.get(newI + 1, newJ + 1)) 	break;
+                                    }
+                                }
+
+                                if ((newI >= 0) && (newI < r1) && (newJ >= 0) && (newJ < c1))
+                                    outImg.set(newI, newJ, img.get(i, j));
+                            }
+                        }
+                        catch (...) {}
+                    }
+                }
+
+            }
+        }
+    }
 
 
     void rotate45(BitMatrix& img) {
@@ -1328,9 +1390,17 @@ namespace ZXing::DataMatrix {
 
 
 
+std::array rotateEasy = {
+    PointF(cos(M_PI / 4), sin(M_PI / 4))
+};
 
+std::array rotateMediun = {
+    PointF(cos(M_PI / 4), sin(M_PI / 4)),
+    PointF(cos(M_PI / 6), sin(M_PI / 6)),
+    PointF(cos(M_PI / 3), sin(M_PI / 3))
+};
 
-    static DetectorResult DetectCRPT(const BitMatrix& image, Warp* warp = nullptr, bool needToTraceWarp = false, bool correctCorners = false)
+    static DetectorResult DetectCRPT(const BitMatrix& image, DecoderResult& outDecodeResult, Warp* warp = nullptr, bool needToTraceWarp = false, bool correctCorners = false)
     {
 
         /*ResultPoint p1(0, 0);
@@ -1342,15 +1412,12 @@ namespace ZXing::DataMatrix {
         BitMatrix newimage = image.copy();
         ResultPoint pointA, pointB, pointC, pointD;
 
-
-        if (!DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) {
-        	// drawDebugImageWithLines(image, "test", {pointA.x(), pointA.y(), pointB.x(), pointB.y(), pointD.x(), pointD.y(), pointC.x(), pointC.y()});
-            rotate45(newimage);
-            //createBitmapFromBitMatrix(newimage, p1, p2, p3, p4);
-            if (!DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) return {};
-
+        if(!DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) {
+            for(const auto& rot : rotateEasy) {
+                rotate(image, newimage, rot);
+                if (DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) break;
+            }
         }
-       	// drawDebugImageWithLines(image, "test", {pointA.x(), pointA.y(), pointB.x(), pointB.y(), pointD.x(), pointD.y(), pointC.x(), pointC.y()});
 
 
         std::array transitions = {
@@ -1379,7 +1446,7 @@ namespace ZXing::DataMatrix {
 
             res = DetectNew(img2, true, true, warp, needToTraceWarp, correctCorners);
             if (!res.isValid()) continue;
-            if (Decode(res.bits()).isValid()) return res;
+            if (outDecodeResult = Decode(res.bits()); outDecodeResult.isValid()) return res;
 
         } //i
 
@@ -1388,24 +1455,14 @@ namespace ZXing::DataMatrix {
         //� ���� ����� ������������ ���3, L1, ������� � �.�, �������� ����������� �� � ��������
         // BitMatrix img2;
         for (int i = 0; i < 4; i++) {
-            img2 = newimage.copy();
             n1 = 0; n2 = 1;
 
-            if (i == 0) { correctBottle(img2, false, false);}
-            if (i == 1) { correctBottle(img2, false, true);}
-            if (i == 2) { correctBottle(img2, true, false);}
-            if (i == 3) { correctBottle(img2, true, true);}
+            correctBottle(newimage, img2, i & 0b10, i & 0b01);
 
             res = DetectNew(img2, true, true, warp, needToTraceWarp, correctCorners);
             if (!res.isValid()) continue;
-            if (Decode(res.bits()).isValid()) return res;
-
+            if (outDecodeResult = Decode(res.bits()); outDecodeResult.isValid()) return res;
         } //i
-
-
-
-
-
         return res;
     }
 
@@ -1498,10 +1555,11 @@ namespace ZXing::DataMatrix {
             return DetectPure(image);
 
         auto result = DetectNew(image, tryHarder, tryRotate);
+        DecoderResult outDecoderResult;
         //if (!result.isValid() && tryHarder)
         //	result = DetectPure(image);
         if (!result.isValid() && tryHarder)
-            result = DetectCRPT(image);
+            result = DetectCRPT(image, outDecoderResult);
         return result;
 
 #endif
@@ -1545,14 +1603,26 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
 		//OLD DETECTORS WITH MY SAMPLE GRID
 		co_return {};
 	#else
+        QuadrilateralI resultCandidate;
 		DetectorResult detRes;
-		//OLD DETECTORS
-        detRes = DetectOldWithOffsets(image);
-		if (!detRes.isValid())
-			detRes = DetectCRPT(image.copy());
-		if (!detRes.isValid())
-    		detRes = DetectNew(image, tryHarder, tryRotate);
 
+        auto SetResultCandidate = [&](){
+            if(detRes.isValid()) {
+                resultCandidate = detRes.position();
+            }
+        };
+
+		//OLD DETECTORS
+        detRes = DetectOldWithOffsets(image, outDecoderResult);
+        SetResultCandidate();
+        if(outDecoderResult.isValid()) return detRes;
+
+        detRes = DetectCRPT(image.copy(), outDecoderResult);
+        SetResultCandidate();
+        if(outDecoderResult.isValid()) return detRes;
+
+        detRes = DetectNew(image, tryHarder, tryRotate);
+        SetResultCandidate();
 		if (detRes.isValid()) {
 			outDecoderResult = Decode(detRes.bits());
 			if(outDecoderResult.isValid()) {
@@ -1566,15 +1636,17 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
 		Warp warp;
 
 		detRes = DetectNew(image, tryHarder, tryRotate, &warp, true);
-
+        SetResultCandidate();
 		if (detRes.isValid()) {
 			outDecoderResult = Decode(detRes.bits());
 			if(outDecoderResult.isValid()) {
 				return detRes;
 			}
 		}
-		detRes = DetectCRPT(image.copy(), &warp, true);
 
+		detRes = DetectCRPT(image.copy(), outDecoderResult, &warp, true);
+        SetResultCandidate();
+        if(outDecoderResult.isValid()) return detRes;
 		if (detRes.isValid()) {
 			outDecoderResult = Decode(detRes.bits());
 			if(outDecoderResult.isValid()) {
@@ -1582,7 +1654,7 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
 			}
 		}
 		//#OLD DETECTORS WITH MY SAMPLE GRID
-		return {};
+		return DetectorResults({}, std::move(resultCandidate));
 	#endif
 }
 
@@ -1595,7 +1667,7 @@ DetectorResults DetectDefined(const BitMatrix& image, const PointF& P0, const Po
 	//OLD DETECTORS
 	detRes = DetectNew(image, tryHarder, tryRotate);
 	if (!detRes.isValid())
-		detRes = DetectCRPT(image.copy());
+		detRes = DetectCRPT(image.copy(), outDecoderResult);
 
 	if (detRes.isValid()) {
 		outDecoderResult = Decode(detRes.bits());
@@ -1616,7 +1688,7 @@ DetectorResults DetectDefined(const BitMatrix& image, const PointF& P0, const Po
 			return detRes;
 		}
 	}
-	detRes = DetectCRPT(image.copy(), &warp, true);
+	detRes = DetectCRPT(image.copy(), outDecoderResult, &warp, true);
 
 	if (detRes.isValid()) {
 		outDecoderResult = Decode(detRes.bits());

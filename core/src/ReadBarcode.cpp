@@ -251,7 +251,7 @@ Results readbarcodescrpt_detector_v1_samplegridv1(const ImageView& _iv, const Po
 	return results;
 }
 
-Results readbarcodescrpt_samplegridv1(const ImageView& _iv, const DecodeHints& hints)
+Results readbarcodescrpt_samplegridv1(const ImageView& _iv, const DecodeHints& hints, bool returnEdges)
 {
 	if (sizeof(PatternType) < 4 && hints.hasFormat(BarcodeFormat::LinearCodes) && (_iv.width() > 0xffff || _iv.height() > 0xffff))
 		throw std::invalid_argument("maximum image width/height is 65535");
@@ -296,6 +296,8 @@ Results readbarcodescrpt_samplegridv1(const ImageView& _iv, const DecodeHints& h
 							results.push_back(std::move(r));
 							--maxSymbols;
 						}
+					} else if(returnEdges) {
+						results.push_back(std::move(r));
 					}
 				} else {
 					auto rs = closedReader->readMultiple(*bitmap, maxSymbols);
