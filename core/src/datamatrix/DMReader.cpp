@@ -31,7 +31,9 @@ Result Reader::decode(const BinaryBitmap& image) const
 	if (!detectorResult.isValid())
 		return {};
 
-	return Result(Decode(detectorResult.bits()), std::move(detectorResult).position(), BarcodeFormat::DataMatrix);
+	Result res = Result(Decode(detectorResult.bits()), std::move(detectorResult).position(), BarcodeFormat::DataMatrix);
+	res.setResultedDetector(detectorResult.resultedDetector());
+	return res;
 #endif
 }
 
@@ -80,7 +82,11 @@ Result DMCRPTReader::decode(const BinaryBitmap& image) const
 	DecoderResult decoderResult;
 	auto detectorResult = DetectSamplegridV1(*binImg, _hints.tryHarder(), _hints.tryRotate(), _hints.isPure(), decoderResult);
 
-	return Result(std::move(decoderResult), std::move(detectorResult).position(), BarcodeFormat::DataMatrix);
+	Result res = Result(Decode(detectorResult.bits()), std::move(detectorResult).position(), BarcodeFormat::DataMatrix);
+	res.setResultedDetector(detectorResult.resultedDetector());
+	return res;
+
+	// return Result(std::move(decoderResult), std::move(detectorResult).position(), BarcodeFormat::DataMatrix);
 }
 #ifdef __cpp_impl_coroutine
 Result DMCRPTReader::decode(const BinaryBitmap& image, int maxSymbols) const

@@ -1612,17 +1612,20 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
             }
         };
 
-		//OLD DETECTORS
+		// OLD DETECTORS
         detRes = DetectOldWithOffsets(image, outDecoderResult);
         SetResultCandidate();
+        detRes.setResultedDetector(ResultedDetector::OffsetDetector);
         if(outDecoderResult.isValid()) return detRes;
 
         detRes = DetectCRPT(image.copy(), outDecoderResult);
         SetResultCandidate();
+        detRes.setResultedDetector(ResultedDetector::DetectCRPT);
         if(outDecoderResult.isValid()) return detRes;
 
         detRes = DetectNew(image, tryHarder, tryRotate);
         SetResultCandidate();
+        detRes.setResultedDetector(ResultedDetector::DetectNew);
 		if (detRes.isValid()) {
 			outDecoderResult = Decode(detRes.bits());
 			if(outDecoderResult.isValid()) {
@@ -1639,6 +1642,7 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
         SetResultCandidate();
 		if (detRes.isValid()) {
 			outDecoderResult = Decode(detRes.bits());
+            detRes.setResultedDetector(ResultedDetector::WarpDetectNew);
 			if(outDecoderResult.isValid()) {
 				return detRes;
 			}
@@ -1648,6 +1652,7 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
         SetResultCandidate();
         if(outDecoderResult.isValid()) return detRes;
 		if (detRes.isValid()) {
+            detRes.setResultedDetector(ResultedDetector::WarpCRPT);
 			outDecoderResult = Decode(detRes.bits());
 			if(outDecoderResult.isValid()) {
 				return detRes;

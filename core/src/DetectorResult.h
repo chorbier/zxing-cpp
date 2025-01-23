@@ -18,10 +18,21 @@ namespace ZXing {
 * matrix of black/white pixels corresponding to the barcode and the position of the code
 * in the input image.
 */
+
+enum class ResultedDetector : unsigned char {
+	Undefinded,
+	OffsetDetector,
+	DetectNew,
+	DetectCRPT,
+	WarpCRPT,
+	WarpDetectNew
+};
+
 class DetectorResult
 {
 	BitMatrix _bits;
 	QuadrilateralI _position;
+	ResultedDetector _resultedDetector = ResultedDetector::Undefinded;
 
 	DetectorResult(const DetectorResult&) = delete;
 	DetectorResult& operator=(const DetectorResult&) = delete;
@@ -37,6 +48,8 @@ public:
 	BitMatrix&& bits() && { return std::move(_bits); }
 	const QuadrilateralI& position() const & { return _position; }
 	QuadrilateralI&& position() && { return std::move(_position); }
+	void setResultedDetector(const ResultedDetector& resultedDetector) {_resultedDetector = resultedDetector; }
+	const ResultedDetector& resultedDetector() const & { return _resultedDetector; }
 
 	bool isValid() const { return !_bits.empty(); }
 };

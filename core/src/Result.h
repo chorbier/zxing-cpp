@@ -14,6 +14,7 @@
 #include "Error.h"
 #include "Quadrilateral.h"
 #include "StructuredAppend.h"
+#include "DetectorResult.h"
 
 #include <string>
 #include <vector>
@@ -153,6 +154,9 @@ public:
 	 */
 	std::string version() const;
 
+	void setResultedDetector(const ResultedDetector& resultedDetector) {_resultedDetector = resultedDetector; }
+	const ResultedDetector& resultedDetector() const & { return _resultedDetector; }
+
 	bool operator==(const Result& o) const;
 
 private:
@@ -168,6 +172,7 @@ private:
 	bool _isMirrored = false;
 	bool _isInverted = false;
 	bool _readerInit = false;
+	ResultedDetector _resultedDetector = ResultedDetector::Undefinded;
 };
 
 using Results = std::vector<Result>;
