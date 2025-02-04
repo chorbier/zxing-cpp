@@ -154,8 +154,8 @@ public:
 	 */
 	std::string version() const;
 
-	void setResultedDetector(const ResultedDetector& resultedDetector) {_resultedDetector = resultedDetector; }
-	const ResultedDetector& resultedDetector() const & { return _resultedDetector; }
+	void setResultedDefect(const ResultedDefect& resultedDefect) {_resultedDefect = resultedDefect; }
+	const ResultedDefect& resultedDefect() const & { return _resultedDefect; }
 
 	bool operator==(const Result& o) const;
 
@@ -172,7 +172,7 @@ private:
 	bool _isMirrored = false;
 	bool _isInverted = false;
 	bool _readerInit = false;
-	ResultedDetector _resultedDetector = ResultedDetector::Undefinded;
+	ResultedDefect _resultedDefect = ResultedDefect::Default;
 };
 
 using Results = std::vector<Result>;

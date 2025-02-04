@@ -288,7 +288,7 @@ int main(int argc, char *argv[])
 	double totalTime = 0;
 	double imreadTime = 0;
 	auto start = std::chrono::high_resolution_clock::now();
-	int resultedDetectors[] = {0,0,0,0,0,0};
+	int resultedDefect[] = {0,0,0,0,0,0};
 	for(auto& fileName : filenames) {
 		
 		auto path = fs::path(fileName);
@@ -311,7 +311,7 @@ int main(int argc, char *argv[])
 				if (zxing_results_ptr != nullptr && zxing_results_ptr->size() >= 1) {
 					for (const auto& result : *zxing_results_ptr) {
 						if(!result.isValid()) continue;
-						resultedDetectors[(int)result.resultedDetector()]++;
+						resultedDefect[(int)result.resultedDefect()]++;
 						// std::cout << fileName << std::endl << "Barcode text: " << result.text() << std::endl;
 						undetected = false;
 						// cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_cv);
@@ -343,16 +343,11 @@ int main(int argc, char *argv[])
 	std::cout << float(cnt) / float(filenames.size()) << " " << cnt << " of " << filenames.size() << std::endl;
 	std::cout << "findEdges: " << ZXing::findEdgesDuration / totalTime << std::endl << "try to decode: " << ZXing::tryToDecodeTime / totalTime << std::endl << "imread: " << imreadTime / totalTime;
 	std::cout << std::endl;
-	std::cout << "Undefinded\t" << resultedDetectors[int(ZXing::ResultedDetector::Undefinded)] << std::endl;
-	std::cout << "OffsetDetector\t" << resultedDetectors[int(ZXing::ResultedDetector::OffsetDetector)] << std::endl;
-	std::cout << "DetectNew\t" << resultedDetectors[int(ZXing::ResultedDetector::DetectNew)] << std::endl;
-	std::cout << "DetectCRPT\t" << resultedDetectors[int(ZXing::ResultedDetector::DetectCRPT)] << std::endl;
-	std::cout << "WarpCRPT\t" << resultedDetectors[int(ZXing::ResultedDetector::WarpCRPT)] << std::endl;
-	std::cout << "WarpDetectNew\t" << resultedDetectors[int(ZXing::ResultedDetector::WarpDetectNew)] << std::endl;
+	std::cout << "Undefinded\t" << resultedDefect[int(ZXing::ResultedDefect::Default)] << std::endl;
+	std::cout << "OffsetDetector\t" << resultedDefect[int(ZXing::ResultedDefect::LMarker)] << std::endl;
+	std::cout << "DetectNew\t" << resultedDefect[int(ZXing::ResultedDefect::MissingSync)] << std::endl;
+	std::cout << "DetectCRPT\t" << resultedDefect[int(ZXing::ResultedDefect::PrintShift)] << std::endl;
 	std::cout << std::endl;
-
-
-
 	return 0;
 }
 

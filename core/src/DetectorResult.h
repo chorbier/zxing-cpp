@@ -19,20 +19,18 @@ namespace ZXing {
 * in the input image.
 */
 
-enum class ResultedDetector : unsigned char {
-	Undefinded,
-	OffsetDetector,
-	DetectNew,
-	DetectCRPT,
-	WarpCRPT,
-	WarpDetectNew
+enum class ResultedDefect : unsigned short {
+	Default,
+	MissingSync,
+	LMarker,
+	PrintShift
 };
 
 class DetectorResult
 {
 	BitMatrix _bits;
 	QuadrilateralI _position;
-	ResultedDetector _resultedDetector = ResultedDetector::Undefinded;
+	ResultedDefect _resultedDefect = ResultedDefect::Default;
 
 	DetectorResult(const DetectorResult&) = delete;
 	DetectorResult& operator=(const DetectorResult&) = delete;
@@ -48,8 +46,8 @@ public:
 	BitMatrix&& bits() && { return std::move(_bits); }
 	const QuadrilateralI& position() const & { return _position; }
 	QuadrilateralI&& position() && { return std::move(_position); }
-	void setResultedDetector(const ResultedDetector& resultedDetector) {_resultedDetector = resultedDetector; }
-	const ResultedDetector& resultedDetector() const & { return _resultedDetector; }
+	void setResultedDefect(const ResultedDefect& resultedDefect) {_resultedDefect = resultedDefect; }
+	const ResultedDefect& resultedDefect() const & { return _resultedDefect; }
 
 	bool isValid() const { return !_bits.empty(); }
 };
