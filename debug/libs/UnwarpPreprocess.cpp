@@ -2,6 +2,7 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <filesystem>
 
 using namespace cv;
 using namespace std;
@@ -230,24 +231,29 @@ pair<Mat, Mat> createRemapGrid(const vector<Point2f>& corners, const vector<vect
         Point2f(offset, outputSize - offset)
     };
 
+    // Инициализация карт смещений
     Mat mapX(outputSize, outputSize, CV_32F, Scalar(0));
     Mat mapY(outputSize, outputSize, CV_32F, Scalar(0));
 
+    // Для каждой стороны
     for (int i = 0; i < 4; ++i) {
-        const vector<Point2f>& srcSide = sides[i];
-        Point2f dstStart = dstCorners[i];
-        Point2f dstEnd = dstCorners[(i + 1) % 4];
+        const vector<Point2f>& srcSide = sides[i]; // Исходная сторона
+        Point2f dstStart = dstCorners[i];         // Начальная точка целевой стороны
+        Point2f dstEnd = dstCorners[(i + 1) % 4]; // Конечная точка целевой стороны
 
+        // Параметризация целевой стороны
         vector<float> t(outputSize / 4);
         for (int j = 0; j < t.size(); ++j) {
             t[j] = static_cast<float>(j) / (t.size() - 1);
         }
 
+        // Точки на целевой стороне
         vector<Point2f> dstPoints(t.size());
         for (size_t j = 0; j < t.size(); ++j) {
             dstPoints[j] = dstStart + t[j] * (dstEnd - dstStart);
         }
 
+        // Параметризация исходной стороны
         vector<float> srcLengths(srcSide.size() - 1);
         for (size_t j = 1; j < srcSide.size(); ++j) {
             srcLengths[j - 1] = norm(srcSide[j] - srcSide[j - 1]);
@@ -266,6 +272,7 @@ pair<Mat, Mat> createRemapGrid(const vector<Point2f>& corners, const vector<vect
             srcT[j] = srcCumLength[j] / totalLength;
         }
 
+        // Заполнение карт смещений
         for (size_t j = 0; j < dstPoints.size(); ++j) {
             Point2f dstPt = dstPoints[j];
             int dx = static_cast<int>(round(dstPt.x));
@@ -288,18 +295,26 @@ pair<Mat, Mat> createRemapGrid(const vector<Point2f>& corners, const vector<vect
         }
     }
 
+    // Собираем точки, где значения в mapX и mapY не равны нулю
+    vector<Point2f> validPoints;
+    vector<float> validValuesX, validValuesY;
+    for (int y = 0; y < outputSize; ++y) {
+        for (int x = 0; x < outputSize; ++x) {
+            if (mapX.at<float>(y, x) != 0 || mapY.at<float>(y, x) != 0) {
+                validPoints.push_back(Point2f(x, y));
+                validValuesX.push_back(mapX.at<float>(y, x));
+                validValuesY.push_back(mapY.at<float>(y, x));
+            }
+        }
+    }
+
     // Создаём сетку для интерполяции
     Mat gridX, gridY;
-    meshgrid(Range(0, outputSize - 1), Range(0, outputSize - 1), gridX, gridY);
+    meshgrid(Range(0, outputSize), Range(0, outputSize), gridX, gridY);
 
-    // Интерполируем mapX и mapY
-    Mat validX = mapX.clone();
-    Mat validY = mapY.clone();
-    Mat validGridX, validGridY;
-    meshgrid(Range(0, outputSize - 1), Range(0, outputSize - 1), validGridX, validGridY);
-
-    Mat remapX = griddata(vector<Point2f>(), vector<float>(), validGridX, validGridY, INTER_LINEAR);
-    Mat remapY = griddata(vector<Point2f>(), vector<float>(), validGridX, validGridY, INTER_LINEAR);
+    // Интерполяция mapX и mapY
+    Mat remapX = griddata(validPoints, validValuesX, gridX, gridY, INTER_LINEAR);
+    Mat remapY = griddata(validPoints, validValuesY, gridX, gridY, INTER_LINEAR);
 
     return {remapX, remapY};
 }
@@ -328,8 +343,6 @@ Mat adaptiveBinarization(const Mat& image) {
 
     return thresh;
 }
-
-int testLOL(){return 1;}
 
 void testUnwarpPipeline(const Mat& image, const string& baseDebugPath) {
     Mat orig = image.clone();
@@ -372,10 +385,18 @@ void testUnwarpPipeline(const Mat& image, const string& baseDebugPath) {
     Mat warped = warpWithRemap(image, corners, sides, 160);
 
     // Сохранение результатов на диск
-    imwrite( baseDebugPath + "/originalImage.png", orig);
-    imwrite( baseDebugPath + "/binaryImage.png", thresh);
-    imwrite( baseDebugPath + "/debugImage.png", debugImg);
-    imwrite( baseDebugPath + "/warpedImage.png", warped);
+	std::filesystem::path basePath(baseDebugPath);
+	std::filesystem::create_directories(basePath);
+
+	//DEBUG
+	auto maps = createRemapGrid(corners, sides, 160);
+
+    imwrite( (basePath / "originalImage.png").string(), orig);
+    imwrite( (basePath / "binaryImage.png").string(), thresh);
+    imwrite( (basePath / "debugImage.png").string(), debugImg);
+    imwrite( (basePath / "warpedImage.png").string(), warped);
+    imwrite( (basePath / "mapX.png").string(), maps.first);
+    imwrite( (basePath / "mapY.png").string(), maps.second);
 	
     // imwrite("originalImage.png", orig);
     // imwrite("binaryImage.png", thresh);
