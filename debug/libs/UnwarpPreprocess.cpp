@@ -20,85 +20,160 @@ Point2f mean(const vector<Point2f>& points) {
 }
 
 bool barycentricCoords(const Point2f& p, const Point2f& v1, const Point2f& v2, const Point2f& v3, Point3d& outCoords) {
-    // Вычисляем барицентрические координаты для точки p относительно треугольника v1, v2, v3
-    double denom = (v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y);
-    if (denom == 0) {
-        return false;  // Точка вне треугольника или треугольник вырожден
-    }
-    double a = ((v2.y - v3.y) * (p.x - v3.x) + (v3.x - v2.x) * (p.y - v3.y)) / denom;
-    double b = ((v3.y - v1.y) * (p.x - v3.x) + (v1.x - v3.x) * (p.y - v3.y)) / denom;
-    double c = 1 - a - b;
-	outCoords = {a,b,c};
+	// Вычисляем барицентрические координаты для точки p относительно треугольника v1, v2, v3
+	double denom = (v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y);
+	if (denom == 0) {
+		return false;  // Точка вне треугольника или треугольник вырожден
+	}
+	double a = ((v2.y - v3.y) * (p.x - v3.x) + (v3.x - v2.x) * (p.y - v3.y)) / denom;
+	double b = ((v3.y - v1.y) * (p.x - v3.x) + (v1.x - v3.x) * (p.y - v3.y)) / denom;
+	double c = 1 - a - b;
+	outCoords = { a,b,c };
 	return true;
-    // return {a, b, c};
+	// return {a, b, c};
 }
 
-// template <typename Func>
-void interpolateTriangle(Mat& image, const Point2f& v1, const Point2f& v2, const Point2f& v3, float val1, float val2, float val3) {
-    // Определяем границы треугольника
-    int xMin = static_cast<int>(min({v1.x, v2.x, v3.x}));
-    int xMax = static_cast<int>(max({v1.x, v2.x, v3.x}));
-    int yMin = static_cast<int>(min({v1.y, v2.y, v3.y}));
-    int yMax = static_cast<int>(max({v1.y, v2.y, v3.y}));
+template <typename Func>
+void RasterizeTriangle(const Point2f& v1, const Point2f& v2, const Point2f& v3, Func processBary) {
+	Point2f vertices[3] = {v1, v2, v3};
+	std::sort(vertices, vertices + 3, [](const Point2f& a, const Point2f& b) {
+		return a.y < b.y;
+	});
 
-    for (int y = yMin; y <= yMax; ++y) {
-        for (int x = xMin; x <= xMax; ++x) {
-            Point2f p(x, y);
+	Point2f A = vertices[0];
+	Point2f B = vertices[1];
+	Point2f C = vertices[2];
+
+	float dx1 = B.y != A.y ? (B.x - A.x) / (B.y - A.y) : 0.0;
+	float dx2 = C.y != A.y ? (C.x - A.x) / (C.y - A.y) : 0.0;
+	float dx3 = C.y != B.y ? (C.x - B.x) / (C.y - B.y) : 0.0;
+
+	double mul = std::round(A.y) + 0.5 - A.y;
+	float x1incr = dx1;
+	float x2incr = dx2;
+	if(dx1 >= dx2) {
+		std::swap(x1incr, x2incr);
+	}
+	float x1 = A.x + x1incr * mul;
+	float x2 = A.x + x2incr * mul;
+
+	for (int y = std::round(A.y); y <= std::floor(B.y - 0.5); y++) {
+		int x = x1 + 0.5;
+		int endX = x2 + 0.5;
+		for (; x < endX; x++) {
 			Point3d bary;
-            if (barycentricCoords(p, v1, v2, v3, bary)) {
-                double a = bary.x, b = bary.y, c = bary.z;
-                if (bary.x >= 0 && bary.y >= 0 && bary.z >= 0) {  // Точка внутри треугольника
-                    // Интерполируем значение
-                    float interpolatedValue = bary.x * val1 + bary.y * val2 + bary.z * val3;
-                    image.at<float>(y, x) = interpolatedValue;
-                }
-            }
-        }
-    }
+			barycentricCoords(Point2f(x,y) + Point2f(0.5, 0.5), v1, v2, v3, bary);
+			processBary(x, y, bary);
+		}
+		x1 += x1incr;
+		x2 += x2incr;
+	}
+
+	mul = std::round(B.y) + 0.5 - B.y;
+	if (dx1 > dx2) {
+		x2 = B.x + mul * dx3;
+		x1incr = dx2;
+		x2incr = dx3;
+	} else {
+		x1 = B.x + mul * dx3;
+		x1incr = dx3;
+		x2incr = dx2;
+	}
+	if (x2 < x1) {
+		std::swap(x1, x2);
+		std::swap(x1incr, x2incr);
+	}
+
+	for (int y = std::round(B.y); y <= std::floor(C.y - 0.5); ++y) {
+		int x = x1 + 0.5;
+		int endX = x2 + 0.5;
+		for (; x < endX; x++) {
+			Point3d bary;
+			barycentricCoords(Point2f(x,y) + Point2f(0.5, 0.5), v1, v2, v3, bary);
+			processBary(x, y, bary);
+		}
+		x1 += x1incr;
+		x2 += x2incr;
+	}
+}
+
+template <typename Func>
+void interpolateTriangle(const Point2f& v1, const Point2f& v2, const Point2f& v3, Func processBary) {
+	// Определяем границы треугольника
+	int xMin = static_cast<int>(min({ v1.x, v2.x, v3.x }));
+	int xMax = static_cast<int>(max({ v1.x, v2.x, v3.x }));
+	int yMin = static_cast<int>(min({ v1.y, v2.y, v3.y }));
+	int yMax = static_cast<int>(max({ v1.y, v2.y, v3.y }));
+
+	for (int y = yMin; y <= yMax; ++y) {
+		for (int x = xMin; x <= xMax; ++x) {
+			Point2f p(x, y);
+			Point3d bary;
+			if (barycentricCoords(p, v1, v2, v3, bary)) {
+				if (bary.x >= 0 && bary.y >= 0 && bary.z >= 0) {  // Точка внутри треугольника
+					// Интерполируем значение
+					processBary(x, y, bary);
+				}
+			}
+		}
+	}
 }
 
 // Функция для линейной интерполяции на основе триангуляции Делоне
-Mat griddata(const vector<Point2f>& points, const vector<float>& values, Mat& gridX, Mat& gridY){
-    if (points.size() != values.size()) {
-        throw invalid_argument("Points and values must have the same size.");
-    }
+void griddata(const vector<Point2f>& points, const vector<Point2f>& values, Mat& gridX, Mat& gridY) {
+	if (points.size() != values.size()) {
+		throw invalid_argument("Points and values must have the same size.");
+	}
 
-    // Создаем объект Subdiv2D для триангуляции Делоне
-    Rect rect(0, 0, gridX.cols, gridX.rows);
-    Subdiv2D subdiv(rect);
+	// Создаем объект Subdiv2D для триангуляции Делоне
+	Rect rect(0, 0, gridX.cols, gridX.rows);
+	Subdiv2D subdiv(rect);
 
-    // Добавляем точки в триангуляцию
-    for (const auto& p : points) {
-        subdiv.insert(p);
-    }
+	// Добавляем точек в триангуляцию
+	subdiv.insert(points);
 
-    // Результат интерполяции
-    Mat result(gridX.size(), CV_32F, Scalar(0));
+	// // Добавляем точки в триангуляцию
+	// for (const auto& p : points) {
+	// 	subdiv.insert(p);
+	// }
 
-    // Получаем список треугольников
-    vector<Vec6f> triangleList;
-    subdiv.getTriangleList(triangleList);
+	// // Результат интерполяции
+	// Mat result(gridX.size(), CV_32F, Scalar(0));
 
-    // Интерполируем значения для каждого треугольника
-    for (const auto& t : triangleList) {
-        Point2f v1(t[0], t[1]);
-        Point2f v2(t[2], t[3]);
-        Point2f v3(t[4], t[5]);
+	// Получаем список треугольников
+	vector<Vec6f> triangleList;
+	subdiv.getTriangleList(triangleList);
 
-        // Находим индексы вершин треугольника
-        int idx1 = -1, idx2 = -1, idx3 = -1;
-        for (size_t i = 0; i < points.size(); ++i) {
-            if (points[i] == v1) idx1 = i;
-            if (points[i] == v2) idx2 = i;
-            if (points[i] == v3) idx3 = i;
-        }
+	// Интерполируем значения для каждого треугольника
+	for (const auto& t : triangleList) {
+		Point2f v1(t[0], t[1]);
+		Point2f v2(t[2], t[3]);
+		Point2f v3(t[4], t[5]);
 
-        if (idx1 != -1 && idx2 != -1 && idx3 != -1) {
-            // Интерполируем значения внутри треугольника
-            interpolateTriangle(result, v1, v2, v3, values[idx1], values[idx2], values[idx3]);
-        }
-    }
-	return result;
+		// Находим индексы вершин треугольника
+		int idx1 = -1, idx2 = -1, idx3 = -1;
+		for (size_t i = 0; i < points.size(); ++i) {
+			if (points[i] == v1) idx1 = i;
+			if (points[i] == v2) idx2 = i;
+			if (points[i] == v3) idx3 = i;
+		}
+
+		if (idx1 != -1 && idx2 != -1 && idx3 != -1) {
+			RasterizeTriangle(v1, v2, v3, [&](const int& x, const int& y, const Point3d& bary) {
+				auto interpolatedValue = bary.x * values[idx1] + bary.y * values[idx2] + bary.z * values[idx3];
+				gridX.at<float>(x, y) = interpolatedValue.x;
+				gridY.at<float>(x, y) = interpolatedValue.y;
+			});
+
+			// Интерполируем значения внутри треугольника
+			// interpolateTriangle(v1, v2, v3, [&](const int& x, const int& y, const Point3d& bary) {
+			// 	auto interpolatedValue = bary.x * values[idx1] + bary.y * values[idx2] + bary.z * values[idx3];
+			// 	gridX.at<float>(x, y) = interpolatedValue.x;
+			// 	gridY.at<float>(x, y) = interpolatedValue.y;
+			// });
+		}
+	}
+	// return result;
 }
 
 vector<Point2f> orderPoints(vector<Point2f> pts) {
@@ -286,113 +361,113 @@ vector<Point2f> adjustCornersToContour(const vector<Point>& contour, const vecto
 }
 
 pair<Mat, Mat> createRemapGrid(const vector<Point2f>& corners, const vector<vector<Point2f>>& sides, int outputSize = 160) {
-    int offset = 25;
-    vector<Point2f> dstCorners = {
-        Point2f(offset, offset),
-        Point2f(outputSize - offset, offset),
-        Point2f(outputSize - offset, outputSize - offset),
-        Point2f(offset, outputSize - offset)
-    };
+	int offset = 25;
+	vector<Point2f> dstCorners = {
+		Point2f(offset, offset),
+		Point2f(outputSize - offset, offset),
+		Point2f(outputSize - offset, outputSize - offset),
+		Point2f(offset, outputSize - offset)
+	};
 
-    // Инициализация карт смещений
-    Mat mapX(outputSize, outputSize, CV_32F, Scalar(0));
-    Mat mapY(outputSize, outputSize, CV_32F, Scalar(0));
+	// Инициализация карт смещений
+	Mat mapX(outputSize, outputSize, CV_32F, Scalar(0));
+	Mat mapY(outputSize, outputSize, CV_32F, Scalar(0));
 
-    // Для каждой стороны
-    for (int i = 0; i < 4; ++i) {
-        const vector<Point2f>& srcSide = sides[i]; // Исходная сторона
-        Point2f dstStart = dstCorners[i];         // Начальная точка целевой стороны
-        Point2f dstEnd = dstCorners[(i + 1) % 4]; // Конечная точка целевой стороны
+	// Для каждой стороны
+	for (int i = 0; i < 4; ++i) {
+		const vector<Point2f>& srcSide = sides[i]; // Исходная сторона
+		Point2f dstStart = dstCorners[i];         // Начальная точка целевой стороны
+		Point2f dstEnd = dstCorners[(i + 1) % 4]; // Конечная точка целевой стороны
 
-        // Параметризация целевой стороны
-        vector<float> t(outputSize / 4);
-        for (int j = 0; j < t.size(); ++j) {
-            t[j] = static_cast<float>(j) / (t.size() - 1);
-        }
+		// Параметризация целевой стороны
+		vector<float> t(outputSize / 4);
+		for (int j = 0; j < t.size(); ++j) {
+			t[j] = static_cast<float>(j) / (t.size() - 1);
+		}
 
-        // Точки на целевой стороне
-        vector<Point2f> dstPoints(t.size());
-        for (size_t j = 0; j < t.size(); ++j) {
-            dstPoints[j] = dstStart + t[j] * (dstEnd - dstStart);
-        }
+		// Точки на целевой стороне
+		vector<Point2f> dstPoints(t.size());
+		for (size_t j = 0; j < t.size(); ++j) {
+			dstPoints[j] = dstStart + t[j] * (dstEnd - dstStart);
+		}
 
-        // Параметризация исходной стороны
-        vector<float> srcLengths(srcSide.size() - 1);
-        for (size_t j = 1; j < srcSide.size(); ++j) {
-            srcLengths[j - 1] = norm(srcSide[j] - srcSide[j - 1]);
-        }
+		// Параметризация исходной стороны
+		vector<float> srcLengths(srcSide.size() - 1);
+		for (size_t j = 1; j < srcSide.size(); ++j) {
+			srcLengths[j - 1] = norm(srcSide[j] - srcSide[j - 1]);
+		}
 
-        vector<float> srcCumLength(srcLengths.size() + 1, 0);
-        for (size_t j = 1; j < srcCumLength.size(); ++j) {
-            srcCumLength[j] = srcCumLength[j - 1] + srcLengths[j - 1];
-        }
+		vector<float> srcCumLength(srcLengths.size() + 1, 0);
+		for (size_t j = 1; j < srcCumLength.size(); ++j) {
+			srcCumLength[j] = srcCumLength[j - 1] + srcLengths[j - 1];
+		}
 
-        float totalLength = srcCumLength.back();
-        if (totalLength == 0) continue;
+		float totalLength = srcCumLength.back();
+		if (totalLength == 0) continue;
 
-        vector<float> srcT(srcCumLength.size());
-        for (size_t j = 0; j < srcT.size(); ++j) {
-            srcT[j] = srcCumLength[j] / totalLength;
-        }
+		vector<float> srcT(srcCumLength.size());
+		for (size_t j = 0; j < srcT.size(); ++j) {
+			srcT[j] = srcCumLength[j] / totalLength;
+		}
 
-        // Заполнение карт смещений
-        for (size_t j = 0; j < dstPoints.size(); ++j) {
-            Point2f dstPt = dstPoints[j];
-            int dx = static_cast<int>(round(dstPt.x));
-            int dy = static_cast<int>(round(dstPt.y));
-            if (dx >= 0 && dx < outputSize && dy >= 0 && dy < outputSize) {
-                float tVal = t[j];
-                size_t idx = lower_bound(srcT.begin(), srcT.end(), tVal) - srcT.begin();
-                Point2f srcPt;
-                if (idx == 0) {
-                    srcPt = srcSide[0];
-                }
-                else if (idx >= srcSide.size()) {
-                    srcPt = srcSide.back();
-                }
-                else {
-                    float w = (tVal - srcT[idx - 1]) / (srcT[idx] - srcT[idx - 1]);
-                    srcPt = (1 - w) * srcSide[idx - 1] + w * srcSide[idx];
-                }
-                mapX.at<float>(dy, dx) = srcPt.x;
-                mapY.at<float>(dy, dx) = srcPt.y;
-            }
-        }
-    }
+		// Заполнение карт смещений
+		for (size_t j = 0; j < dstPoints.size(); ++j) {
+			Point2f dstPt = dstPoints[j];
+			int dx = static_cast<int>(round(dstPt.x));
+			int dy = static_cast<int>(round(dstPt.y));
+			if (dx >= 0 && dx < outputSize && dy >= 0 && dy < outputSize) {
+				float tVal = t[j];
+				size_t idx = lower_bound(srcT.begin(), srcT.end(), tVal) - srcT.begin();
+				Point2f srcPt;
+				if (idx == 0) {
+					srcPt = srcSide[0];
+				}
+				else if (idx >= srcSide.size()) {
+					srcPt = srcSide.back();
+				}
+				else {
+					float w = (tVal - srcT[idx - 1]) / (srcT[idx] - srcT[idx - 1]);
+					srcPt = (1 - w) * srcSide[idx - 1] + w * srcSide[idx];
+				}
+				mapX.at<float>(dy, dx) = srcPt.x;
+				mapY.at<float>(dy, dx) = srcPt.y;
+			}
+		}
+	}
 
-    // Собираем точки, где значения в mapX и mapY не равны нулю
-    vector<Point2f> validPoints;
-    vector<float> validValuesX, validValuesY;
-    for (int y = 0; y < outputSize; ++y) {
-        for (int x = 0; x < outputSize; ++x) {
-            if (mapX.at<float>(y, x) != 0 || mapY.at<float>(y, x) != 0) {
-                validPoints.push_back(Point2f(x, y));
-                validValuesX.push_back(mapX.at<float>(y, x));
-                validValuesY.push_back(mapY.at<float>(y, x));
-            }
-        }
-    }
+	// Собираем точки, где значения в mapX и mapY не равны нулю
+	vector<Point2f> validPoints;
+	vector<Point2f> validValues;
+	for (int y = 0; y < outputSize; ++y) {
+		for (int x = 0; x < outputSize; ++x) {
+			if (mapX.at<float>(y, x) != 0 || mapY.at<float>(y, x) != 0) {
+				validPoints.push_back(Point2f(x, y));
+				validValues.push_back({ mapX.at<float>(y, x), mapY.at<float>(y, x) });
+				// validValuesX.push_back(mapX.at<float>(y, x));
+				// validValuesY.push_back(mapY.at<float>(y, x));
+			}
+		}
+	}
 
-    // Создаём сетку для интерполяции
-    Mat gridX(outputSize, outputSize, CV_32F);
-    Mat gridY(outputSize, outputSize, CV_32F);
-    for (int y = 0; y < outputSize; ++y) {
-        for (int x = 0; x < outputSize; ++x) {
-            gridX.at<float>(y, x) = x;
-            gridY.at<float>(y, x) = y;
-        }
-    }
+	// // Создаём сетку для интерполяции
+	// Mat gridX(outputSize, outputSize, CV_32F);
+	// Mat gridY(outputSize, outputSize, CV_32F);
+	// for (int y = 0; y < outputSize; ++y) {
+	// 	for (int x = 0; x < outputSize; ++x) {
+	// 		gridX.at<float>(y, x) = x;
+	// 		gridY.at<float>(y, x) = y;
+	// 	}
+	// }
 
-    // Mat remapX(outputSize, outputSize, CV_32F);
-    // Mat remapY(outputSize, outputSize, CV_32F);
-	// griddata(validPoints, validValuesX, remapX, remapY);
-	// griddata(validPoints, validValuesX, remapY, remapX);
+	Mat remapX(outputSize, outputSize, CV_32F, Scalar(0));
+	Mat remapY(outputSize, outputSize, CV_32F, Scalar(0));
+	griddata(validPoints, validValues, remapX, remapY);
 
-    // // Интерполяция mapX и mapY
-    Mat remapX = griddata(validPoints, validValuesX, gridX, gridY);
-    Mat remapY = griddata(validPoints, validValuesY, gridX, gridY);
+	// // Интерполяция mapX и mapY
+	// Mat remapX = griddata(validPoints, validValuesX, gridX, gridY);
+	// Mat remapY = griddata(validPoints, validValuesY, gridX, gridY);
 
-    return { remapX, remapY };
+	return { remapX, remapY };
 }
 
 Mat warpWithRemap(const Mat& image, const vector<Point2f>& corners, const vector<vector<Point2f>>& sides, int outputSize = 160) {
@@ -473,9 +548,9 @@ void testUnwarpPipeline(const Mat& image, const string& baseDebugPath) {
 	imwrite((basePath / "debugImage.png").string(), debugImg);
 	imwrite((basePath / "warpedImage.png").string(), warped);
 	double minVal, maxVal;
-    minMaxLoc(maps.first, &minVal, &maxVal);
-	imwrite((basePath / "mapX.png").string(), (maps.first - minVal) / (maxVal - minVal) * 255 );
-    minMaxLoc(maps.second, &minVal, &maxVal);
+	minMaxLoc(maps.first, &minVal, &maxVal);
+	imwrite((basePath / "mapX.png").string(), (maps.first - minVal) / (maxVal - minVal) * 255);
+	minMaxLoc(maps.second, &minVal, &maxVal);
 	imwrite((basePath / "mapY.png").string(), (maps.second - minVal) / (maxVal - minVal) * 255);
 	// imwrite((basePath / "mapX.png").string(), maps.first );
 	// imwrite((basePath / "mapY.png").string(), maps.second);
