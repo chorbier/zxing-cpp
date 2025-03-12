@@ -19,20 +19,46 @@ Point2f mean(const vector<Point2f>& points) {
 	return centroid;
 }
 
-void meshgrid(const Range& xRange, const Range& yRange, Mat& gridX, Mat& gridY) {
-	vector<float> x, y;
-	for (int i = xRange.start; i <= xRange.end; ++i) x.push_back(i);
-	for (int j = yRange.start; j <= yRange.end; ++j) y.push_back(j);
+bool barycentricCoords(const Point2f& p, const Point2f& v1, const Point2f& v2, const Point2f& v3, Point3d& outCoords) {
+    // Вычисляем барицентрические координаты для точки p относительно треугольника v1, v2, v3
+    double denom = (v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y);
+    if (denom == 0) {
+        return false;  // Точка вне треугольника или треугольник вырожден
+    }
+    double a = ((v2.y - v3.y) * (p.x - v3.x) + (v3.x - v2.x) * (p.y - v3.y)) / denom;
+    double b = ((v3.y - v1.y) * (p.x - v3.x) + (v1.x - v3.x) * (p.y - v3.y)) / denom;
+    double c = 1 - a - b;
+	outCoords = {a,b,c};
+	return true;
+    // return {a, b, c};
+}
 
-	Mat xMat = Mat(x).reshape(1, 1);
-	Mat yMat = Mat(y).reshape(1, 1);
+// template <typename Func>
+void interpolateTriangle(Mat& image, const Point2f& v1, const Point2f& v2, const Point2f& v3, float val1, float val2, float val3) {
+    // Определяем границы треугольника
+    int xMin = static_cast<int>(min({v1.x, v2.x, v3.x}));
+    int xMax = static_cast<int>(max({v1.x, v2.x, v3.x}));
+    int yMin = static_cast<int>(min({v1.y, v2.y, v3.y}));
+    int yMax = static_cast<int>(max({v1.y, v2.y, v3.y}));
 
-	repeat(xMat, yMat.total(), 1, gridX);
-	repeat(yMat.t(), 1, xMat.total(), gridY);
+    for (int y = yMin; y <= yMax; ++y) {
+        for (int x = xMin; x <= xMax; ++x) {
+            Point2f p(x, y);
+			Point3d bary;
+            if (barycentricCoords(p, v1, v2, v3, bary)) {
+                double a = bary.x, b = bary.y, c = bary.z;
+                if (bary.x >= 0 && bary.y >= 0 && bary.z >= 0) {  // Точка внутри треугольника
+                    // Интерполируем значение
+                    float interpolatedValue = bary.x * val1 + bary.y * val2 + bary.z * val3;
+                    image.at<float>(y, x) = interpolatedValue;
+                }
+            }
+        }
+    }
 }
 
 // Функция для линейной интерполяции на основе триангуляции Делоне
-Mat griddata(const vector<Point2f>& points, const vector<float>& values, const Mat& gridX, const Mat& gridY, int interpolation = INTER_LINEAR) {
+Mat griddata(const vector<Point2f>& points, const vector<float>& values, Mat& gridX, Mat& gridY){
     if (points.size() != values.size()) {
         throw invalid_argument("Points and values must have the same size.");
     }
@@ -49,42 +75,30 @@ Mat griddata(const vector<Point2f>& points, const vector<float>& values, const M
     // Результат интерполяции
     Mat result(gridX.size(), CV_32F, Scalar(0));
 
-    // Интерполяция для каждой точки сетки
-    for (int y = 0; y < gridX.rows; ++y) {
-        for (int x = 0; x < gridX.cols; ++x) {
-            Point2f p(gridX.at<float>(y, x), gridY.at<float>(y, x));
-            int edge, vertex;
-            subdiv.locate(p, edge, vertex);
+    // Получаем список треугольников
+    vector<Vec6f> triangleList;
+    subdiv.getTriangleList(triangleList);
 
-            if (vertex != 0) {
-                // Точка находится внутри триангуляции
-                Point2f pt1, pt2, pt3;
-                pt1 = subdiv.getVertex(vertex, &edge);
-                pt2 = subdiv.getVertex(subdiv.edgeOrg(edge), &edge);
-                pt3 = subdiv.getVertex(subdiv.edgeDst(edge), &edge);
+    // Интерполируем значения для каждого треугольника
+    for (const auto& t : triangleList) {
+        Point2f v1(t[0], t[1]);
+        Point2f v2(t[2], t[3]);
+        Point2f v3(t[4], t[5]);
 
-                // Находим барицентрические координаты
-                Mat A = (Mat_<float>(3, 3) << pt1.x, pt2.x, pt3.x,
-                                              pt1.y, pt2.y, pt3.y,
-                                              1.0f, 1.0f, 1.0f);
-                Mat B = (Mat_<float>(3, 1) << p.x, p.y, 1.0f);
-                Mat X = A.inv() * B;
+        // Находим индексы вершин треугольника
+        int idx1 = -1, idx2 = -1, idx3 = -1;
+        for (size_t i = 0; i < points.size(); ++i) {
+            if (points[i] == v1) idx1 = i;
+            if (points[i] == v2) idx2 = i;
+            if (points[i] == v3) idx3 = i;
+        }
 
-                // Находим значения в вершинах треугольника
-                float val1 = values[std::distance(points.begin(), std::find(points.begin(), points.end(), pt1))];
-                float val2 = values[std::distance(points.begin(), std::find(points.begin(), points.end(), pt2))];
-                float val3 = values[std::distance(points.begin(), std::find(points.begin(), points.end(), pt3))];
-
-                // Интерполируем значение
-                result.at<float>(y, x) = X.at<float>(0) * val1 + X.at<float>(1) * val2 + X.at<float>(2) * val3;
-            } else {
-                // Точка вне триангуляции
-                result.at<float>(y, x) = numeric_limits<float>::quiet_NaN();
-            }
+        if (idx1 != -1 && idx2 != -1 && idx3 != -1) {
+            // Интерполируем значения внутри треугольника
+            interpolateTriangle(result, v1, v2, v3, values[idx1], values[idx2], values[idx3]);
         }
     }
-
-    return result;
+	return result;
 }
 
 vector<Point2f> orderPoints(vector<Point2f> pts) {
@@ -369,9 +383,14 @@ pair<Mat, Mat> createRemapGrid(const vector<Point2f>& corners, const vector<vect
         }
     }
 
-    // Интерполяция mapX и mapY
-    Mat remapX = griddata(validPoints, validValuesX, gridX, gridY, INTER_LINEAR);
-    Mat remapY = griddata(validPoints, validValuesY, gridX, gridY, INTER_LINEAR);
+    // Mat remapX(outputSize, outputSize, CV_32F);
+    // Mat remapY(outputSize, outputSize, CV_32F);
+	// griddata(validPoints, validValuesX, remapX, remapY);
+	// griddata(validPoints, validValuesX, remapY, remapX);
+
+    // // Интерполяция mapX и mapY
+    Mat remapX = griddata(validPoints, validValuesX, gridX, gridY);
+    Mat remapY = griddata(validPoints, validValuesY, gridX, gridY);
 
     return { remapX, remapY };
 }
@@ -453,8 +472,13 @@ void testUnwarpPipeline(const Mat& image, const string& baseDebugPath) {
 	imwrite((basePath / "binaryImage.png").string(), thresh);
 	imwrite((basePath / "debugImage.png").string(), debugImg);
 	imwrite((basePath / "warpedImage.png").string(), warped);
-	imwrite((basePath / "mapX.png").string(), maps.first);
-	imwrite((basePath / "mapY.png").string(), maps.second);
+	double minVal, maxVal;
+    minMaxLoc(maps.first, &minVal, &maxVal);
+	imwrite((basePath / "mapX.png").string(), (maps.first - minVal) / (maxVal - minVal) * 255 );
+    minMaxLoc(maps.second, &minVal, &maxVal);
+	imwrite((basePath / "mapY.png").string(), (maps.second - minVal) / (maxVal - minVal) * 255);
+	// imwrite((basePath / "mapX.png").string(), maps.first );
+	// imwrite((basePath / "mapY.png").string(), maps.second);
 
 	// imwrite("originalImage.png", orig);
 	// imwrite("binaryImage.png", thresh);
