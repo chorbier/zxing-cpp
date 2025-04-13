@@ -3,8 +3,17 @@
 
 #define DEBUG_DRAW
 
+struct UnwarpParams
+{
+	int outputSize = 160;
+	int offset = 25;
+	int outputPointsDist = 4;
+	float approxPolyEpsilon = 0.01;
+	float pointFilterDistanceThreshold = 6.0;
+};
+
 #ifdef DEBUG_DRAW
-void testUnwarpPipeline(const cv::Mat& image, const std::string& baseDebugPath);
+void testUnwarpPreprocess(const cv::Mat& image, const std::string& baseDebugPath, const UnwarpParams& params);
 #endif
 
-bool cvUnwarpPreprocess(cv::Mat& outImage);
+void cvUnwarpPreprocess(cv::Mat& outResult, const cv::Mat& image, const UnwarpParams& params);

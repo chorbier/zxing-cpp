@@ -25,6 +25,8 @@
 #include <chrono>
 
 #include <filesystem>
+#include <UnwarpPreprocess.h>
+
 namespace fs = std::filesystem;
 
 namespace ZXing {
@@ -277,8 +279,9 @@ int main(int argc, char *argv[])
 						   .setMaxNumberOfSymbols(0xff)
 						   .setEanAddOnSymbol(ZXing::EanAddOnSymbol::Ignore);
 
-    // std::string folder("/home/chorbier/dm-tests/real");
-    std::string folder("/home/chorbier/dm-tests/missing_middle_line");
+    fs::path debugOutput("/home/chorbier/dm_debug");
+
+    std::string folder("/home/chorbier/dm-tests/selected_frames_dm_videos");
     std::vector<cv::String> filenames;
     cv::glob(folder, filenames, false);
 
@@ -289,19 +292,27 @@ int main(int argc, char *argv[])
 	double imreadTime = 0;
 	auto start = std::chrono::high_resolution_clock::now();
 	int resultedDefect[] = {0,0,0,0,0,0};
+
 	for(auto& fileName : filenames) {
 		
-		auto path = fs::path(fileName);
-
 		auto start = std::chrono::high_resolution_clock::now();
 		cv::Mat image_cv = cv::imread(fileName, cv::IMREAD_COLOR);
 		imreadTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
 		
 		// ZXing::debugOutputFilepath = ZXing::debugOutputFolder / path.filename();
 
+		cv::Mat unwarpedImage;
+
+		std::string debugBase = (debugOutput / fs::path(fileName).stem()).string();
+		auto startUnwarp = std::chrono::high_resolution_clock::now();
+		testUnwarpPreprocess(image_cv, debugBase, UnwarpParams());
+		// cvUnwarpPreprocess(unwarpedImage, image_cv);
+		// std::cout << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - startUnwarp).count() << " testUnwarpTime "<< fs::path(fileName).stem() << std::endl;
+
 		std::unique_ptr<ZXing::Results> zxing_results_ptr;
 		int width = image_cv.cols;
 		int height = image_cv.rows;
+		std::cout << "file: \t" << fs::path(fileName).stem().string() << std::endl;
 		if (width * height >= 100) {
 			for (int candidate = 0; candidate <= 6; candidate++) {
 				cv::Mat image_candidate = ZXing::get_next_possible_image(image_cv, candidate);
@@ -312,7 +323,9 @@ int main(int argc, char *argv[])
 					for (const auto& result : *zxing_results_ptr) {
 						if(!result.isValid()) continue;
 						resultedDefect[(int)result.resultedDefect()]++;
-						// std::cout << fileName << std::endl << "Barcode text: " << result.text() << std::endl;
+						auto resultString = result.text();
+						// std::cout << "file: \t" << fs::path(fileName).stem().string() << std::endl << "text: \t" << resultString << "\n\n";
+						std::cout << "text: \t" << resultString << "\n\n";
 						undetected = false;
 						// cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_cv);
 						// cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_candidate);
@@ -335,7 +348,7 @@ int main(int argc, char *argv[])
 			}
 		}
 		cntTotal++;
-		std::cout << "Done " << cntTotal << "(" << cnt << ")" << " of " <<  filenames.size() << "\t\r" << std::flush;
+		// std::cout << "Done " << cntTotal << "(" << cnt << ")" << " of " <<  filenames.size() << "\t\r" << std::flush;
 	}
 
 	totalTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();

@@ -34,26 +34,40 @@ void BitMatrixToMat(const BitMatrix& image, cv::Mat& OutMat) {
 
 int DebugFileIndex = 0;
 
+// void drawDebugImage(const BitMatrix& image, const std::string& postfix) {
+
+// 	cv::Mat img(image.width(), image.height(), CV_8UC3);
+// 	BitMatrixToMat(image, img);
+
+// 	// cv::Mat A(100, 100, CV_64F, x);
+
+// 		// fs::path newFilename = debugOutputFilepath.stem();
+// 		// newFilename += fs::path(*postfix);
+// 		// newFilename += debugOutputFilepath.extension();
+// 		// newFilename = debugOutputFolder / newFilename;
+// 		// // std::string FILENAME = newFilename;
+// 		// cv::imwrite(debugOutputFolder / filename, img);
+
+// 	auto name = std::to_string(DebugFileIndex++);
+// 	name = std::string(4 - name.length(), '0') + name;
+// 	cv::imwrite(debugOutputFolder / (name + ".jpg"), img);
+// 	// cv::imwrite(debugOutputFolder / filename, img);
+// }
+
 void drawDebugImage(const BitMatrix& image, const std::string& postfix) {
 
 	cv::Mat img(image.width(), image.height(), CV_8UC3);
 	BitMatrixToMat(image, img);
 
-	// cv::Mat A(100, 100, CV_64F, x);
-
-		// fs::path newFilename = debugOutputFilepath.stem();
-		// newFilename += fs::path(*postfix);
-		// newFilename += debugOutputFilepath.extension();
-		// newFilename = debugOutputFolder / newFilename;
-		// // std::string FILENAME = newFilename;
-		// cv::imwrite(debugOutputFolder / filename, img);
-
 	auto name = std::to_string(DebugFileIndex++);
 	name = std::string(4 - name.length(), '0') + name;
-	cv::imwrite(debugOutputFolder / (name + ".jpg"), img);
-	// cv::imwrite(debugOutputFolder / filename, img);
-}
+	if(postfix.length() > 0) {
+		name+="_"+postfix;
+	}
 
+	cv::imwrite(debugOutputFolder / (name + ".jpg"), img);
+
+}
 
 void drawDebugImageWithLines(const BitMatrix& image, const std::string& postfix, const std::vector<double>& corners) {
 

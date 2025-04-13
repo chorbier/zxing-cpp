@@ -2,9 +2,12 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include "delaunator.hpp"
 
 #ifdef DEBUG_DRAW
 #include <filesystem>
+#include <fstream>
+#include <chrono>
 #endif
 
 using namespace cv;
@@ -19,7 +22,7 @@ Point2f mean(const vector<Point2f>& points) {
 	return centroid;
 }
 
-bool barycentricCoords(const Point2f& p, const Point2f& v1, const Point2f& v2, const Point2f& v3, Point3d& outCoords) {
+inline bool barycentricCoords(const Point2f& p, const Point2f& v1, const Point2f& v2, const Point2f& v3, Point3d& outCoords) {
 	// Вычисляем барицентрические координаты для точки p относительно треугольника v1, v2, v3
 	double denom = (v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y);
 	if (denom == 0) {
@@ -28,14 +31,14 @@ bool barycentricCoords(const Point2f& p, const Point2f& v1, const Point2f& v2, c
 	double a = ((v2.y - v3.y) * (p.x - v3.x) + (v3.x - v2.x) * (p.y - v3.y)) / denom;
 	double b = ((v3.y - v1.y) * (p.x - v3.x) + (v1.x - v3.x) * (p.y - v3.y)) / denom;
 	double c = 1 - a - b;
-	outCoords = { a,b,c };
+	outCoords = { a, b, c };
 	return true;
 	// return {a, b, c};
 }
 
 template <typename Func>
 void RasterizeTriangle(const Point2f& v1, const Point2f& v2, const Point2f& v3, Func processBary) {
-	Point2f vertices[3] = {v1, v2, v3};
+	Point2f vertices[3] = { v1, v2, v3 };
 	std::sort(vertices, vertices + 3, [](const Point2f& a, const Point2f& b) {
 		return a.y < b.y;
 	});
@@ -51,7 +54,7 @@ void RasterizeTriangle(const Point2f& v1, const Point2f& v2, const Point2f& v3, 
 	double mul = std::round(A.y) + 0.5 - A.y;
 	float x1incr = dx1;
 	float x2incr = dx2;
-	if(dx1 >= dx2) {
+	if (dx1 >= dx2) {
 		std::swap(x1incr, x2incr);
 	}
 	float x1 = A.x + x1incr * mul;
@@ -62,7 +65,7 @@ void RasterizeTriangle(const Point2f& v1, const Point2f& v2, const Point2f& v3, 
 		int endX = x2 + 0.5;
 		for (; x < endX; x++) {
 			Point3d bary;
-			barycentricCoords(Point2f(x,y) + Point2f(0.5, 0.5), v1, v2, v3, bary);
+			barycentricCoords({ x + 0.5, y + 0.5 }, v1, v2, v3, bary);
 			processBary(x, y, bary);
 		}
 		x1 += x1incr;
@@ -74,7 +77,8 @@ void RasterizeTriangle(const Point2f& v1, const Point2f& v2, const Point2f& v3, 
 		x2 = B.x + mul * dx3;
 		x1incr = dx2;
 		x2incr = dx3;
-	} else {
+	}
+	else {
 		x1 = B.x + mul * dx3;
 		x1incr = dx3;
 		x2incr = dx2;
@@ -89,33 +93,11 @@ void RasterizeTriangle(const Point2f& v1, const Point2f& v2, const Point2f& v3, 
 		int endX = x2 + 0.5;
 		for (; x < endX; x++) {
 			Point3d bary;
-			barycentricCoords(Point2f(x,y) + Point2f(0.5, 0.5), v1, v2, v3, bary);
+			barycentricCoords(Point2f(x, y) + Point2f(0.5, 0.5), v1, v2, v3, bary);
 			processBary(x, y, bary);
 		}
 		x1 += x1incr;
 		x2 += x2incr;
-	}
-}
-
-template <typename Func>
-void interpolateTriangle(const Point2f& v1, const Point2f& v2, const Point2f& v3, Func processBary) {
-	// Определяем границы треугольника
-	int xMin = static_cast<int>(min({ v1.x, v2.x, v3.x }));
-	int xMax = static_cast<int>(max({ v1.x, v2.x, v3.x }));
-	int yMin = static_cast<int>(min({ v1.y, v2.y, v3.y }));
-	int yMax = static_cast<int>(max({ v1.y, v2.y, v3.y }));
-
-	for (int y = yMin; y <= yMax; ++y) {
-		for (int x = xMin; x <= xMax; ++x) {
-			Point2f p(x, y);
-			Point3d bary;
-			if (barycentricCoords(p, v1, v2, v3, bary)) {
-				if (bary.x >= 0 && bary.y >= 0 && bary.z >= 0) {  // Точка внутри треугольника
-					// Интерполируем значение
-					processBary(x, y, bary);
-				}
-			}
-		}
 	}
 }
 
@@ -131,14 +113,6 @@ void griddata(const vector<Point2f>& points, const vector<Point2f>& values, Mat&
 
 	// Добавляем точек в триангуляцию
 	subdiv.insert(points);
-
-	// // Добавляем точки в триангуляцию
-	// for (const auto& p : points) {
-	// 	subdiv.insert(p);
-	// }
-
-	// // Результат интерполяции
-	// Mat result(gridX.size(), CV_32F, Scalar(0));
 
 	// Получаем список треугольников
 	vector<Vec6f> triangleList;
@@ -164,13 +138,40 @@ void griddata(const vector<Point2f>& points, const vector<Point2f>& values, Mat&
 				gridX.at<float>(x, y) = interpolatedValue.x;
 				gridY.at<float>(x, y) = interpolatedValue.y;
 			});
+		}
+	}
+}
 
-			// Интерполируем значения внутри треугольника
-			// interpolateTriangle(v1, v2, v3, [&](const int& x, const int& y, const Point3d& bary) {
-			// 	auto interpolatedValue = bary.x * values[idx1] + bary.y * values[idx2] + bary.z * values[idx3];
-			// 	gridX.at<float>(x, y) = interpolatedValue.x;
-			// 	gridY.at<float>(x, y) = interpolatedValue.y;
-			// });
+// Функция для линейной интерполяции на основе триангуляции Делоне
+void griddataFaster(const vector<Point2f>& points, const vector<Point2f>& values, Mat& gridX, Mat& gridY) {
+	if (points.size() != values.size()) {
+		throw invalid_argument("Points and values must have the same size.");
+	}
+
+	vector<double> coords;
+	coords.reserve(points.size() * 2);
+	for (const auto& p : points) {
+		coords.push_back(p.x);
+		coords.push_back(p.y);
+	}
+
+	delaunator::Delaunator d(coords);
+
+	// Интерполируем значения для каждого треугольника
+	for (size_t i = 0; i < d.triangles.size(); i += 3) {
+
+		int idx1 = d.triangles[i], idx2 = d.triangles[i + 1], idx3 = d.triangles[i + 2];
+		Point2f v1 = points[idx1];
+		Point2f v2 = points[idx2];
+		Point2f v3 = points[idx3];
+
+		if (idx1 != -1 && idx2 != -1 && idx3 != -1) {
+			RasterizeTriangle(v1, v2, v3, [&](const int& x, const int& y, const Point3d& bary) {
+				auto interpolatedValue = bary.x * values[idx1] + bary.y * values[idx2] + bary.z * values[idx3];
+				gridX.at<float>(x, y) = interpolatedValue.x;
+				gridY.at<float>(x, y) = interpolatedValue.y;
+			});
+
 		}
 	}
 	// return result;
@@ -207,7 +208,7 @@ vector<Point2f> orderPoints(vector<Point2f> pts) {
 	return sortedRect;
 }
 
-pair<vector<Point>, vector<Point2f>> findMainContour(Mat thresh) {
+pair<vector<Point>, vector<Point2f>> findMainContour(Mat thresh, float epsilon) {
 	vector<vector<Point>> contours;
 	vector<Vec4i> hierarchy;
 	findContours(thresh, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
@@ -215,7 +216,7 @@ pair<vector<Point>, vector<Point2f>> findMainContour(Mat thresh) {
 	for (const auto& cnt : contours) {
 		if (contourArea(cnt) < 100) continue;
 		vector<Point> approx;
-		approxPolyDP(cnt, approx, 0.01 * arcLength(cnt, true), true);
+		approxPolyDP(cnt, approx, epsilon * arcLength(cnt, true), true);
 		if (approx.size() == 4) {
 			return { cnt, vector<Point2f>(approx.begin(), approx.end()) };
 		}
@@ -245,8 +246,9 @@ float distanceToSegment(Point2f pt, Point2f start, Point2f end) {
 	return norm(pt - closestPoint);
 }
 
-vector<Point> filterContourPoints(const vector<Point>& contour, const vector<Point2f>& corners, float threshold = 5.0f) {
-	vector<Point> filtered;
+void filterContourPoints(vector<Point>& contour, const vector<Point2f>& corners, float threshold) {
+
+	int j = 0;
 
 	for (const auto& pt : contour) {
 		for (int i = 0; i < 4; ++i) {
@@ -254,13 +256,14 @@ vector<Point> filterContourPoints(const vector<Point>& contour, const vector<Poi
 			Point2f end = corners[(i + 1) % 4];
 			float dist = distanceToSegment(pt, start, end);
 			if (dist < threshold) {
-				filtered.push_back(pt);
+				contour[j++] = pt;
 				break;
 			}
 		}
 	}
+	contour.resize(j);
 
-	return filtered;
+	// return filtered;
 }
 
 vector<vector<Point2f>> splitContourIntoSides(const vector<Point>& contour, const vector<Point2f>& corners) {
@@ -360,8 +363,7 @@ vector<Point2f> adjustCornersToContour(const vector<Point>& contour, const vecto
 	return adjusted;
 }
 
-pair<Mat, Mat> createRemapGrid(const vector<Point2f>& corners, const vector<vector<Point2f>>& sides, int outputSize = 160) {
-	int offset = 25;
+void createRemapGrid(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& corners, const vector<vector<Point2f>>& sides, int outputSize = 160, int offset = 25, int outputPointsDist = 4) {
 	vector<Point2f> dstCorners = {
 		Point2f(offset, offset),
 		Point2f(outputSize - offset, offset),
@@ -369,9 +371,12 @@ pair<Mat, Mat> createRemapGrid(const vector<Point2f>& corners, const vector<vect
 		Point2f(offset, outputSize - offset)
 	};
 
-	// Инициализация карт смещений
-	Mat mapX(outputSize, outputSize, CV_32F, Scalar(0));
-	Mat mapY(outputSize, outputSize, CV_32F, Scalar(0));
+	// // Инициализация карт смещений
+	// Mat mapX(outputSize, outputSize, CV_32F, Scalar(0));
+	// Mat mapY(outputSize, outputSize, CV_32F, Scalar(0));
+
+	vector<Point2f> validPoints;
+	vector<Point2f> validValues;
 
 	// Для каждой стороны
 	for (int i = 0; i < 4; ++i) {
@@ -380,7 +385,7 @@ pair<Mat, Mat> createRemapGrid(const vector<Point2f>& corners, const vector<vect
 		Point2f dstEnd = dstCorners[(i + 1) % 4]; // Конечная точка целевой стороны
 
 		// Параметризация целевой стороны
-		vector<float> t(outputSize / 4);
+		vector<float> t(outputSize / outputPointsDist);
 		for (int j = 0; j < t.size(); ++j) {
 			t[j] = static_cast<float>(j) / (t.size() - 1);
 		}
@@ -429,52 +434,23 @@ pair<Mat, Mat> createRemapGrid(const vector<Point2f>& corners, const vector<vect
 					float w = (tVal - srcT[idx - 1]) / (srcT[idx] - srcT[idx - 1]);
 					srcPt = (1 - w) * srcSide[idx - 1] + w * srcSide[idx];
 				}
-				mapX.at<float>(dy, dx) = srcPt.x;
-				mapY.at<float>(dy, dx) = srcPt.y;
+				validPoints.push_back(dstPt);
+				validValues.push_back(srcPt);
+				// mapX.at<float>(dy, dx) = srcPt.x;
+				// mapY.at<float>(dy, dx) = srcPt.y;
 			}
 		}
 	}
 
-	// Собираем точки, где значения в mapX и mapY не равны нулю
-	vector<Point2f> validPoints;
-	vector<Point2f> validValues;
-	for (int y = 0; y < outputSize; ++y) {
-		for (int x = 0; x < outputSize; ++x) {
-			if (mapX.at<float>(y, x) != 0 || mapY.at<float>(y, x) != 0) {
-				validPoints.push_back(Point2f(x, y));
-				validValues.push_back({ mapX.at<float>(y, x), mapY.at<float>(y, x) });
-				// validValuesX.push_back(mapX.at<float>(y, x));
-				// validValuesY.push_back(mapY.at<float>(y, x));
-			}
-		}
-	}
-
-	// // Создаём сетку для интерполяции
-	// Mat gridX(outputSize, outputSize, CV_32F);
-	// Mat gridY(outputSize, outputSize, CV_32F);
-	// for (int y = 0; y < outputSize; ++y) {
-	// 	for (int x = 0; x < outputSize; ++x) {
-	// 		gridX.at<float>(y, x) = x;
-	// 		gridY.at<float>(y, x) = y;
-	// 	}
-	// }
-
-	Mat remapX(outputSize, outputSize, CV_32F, Scalar(0));
-	Mat remapY(outputSize, outputSize, CV_32F, Scalar(0));
-	griddata(validPoints, validValues, remapX, remapY);
-
-	// // Интерполяция mapX и mapY
-	// Mat remapX = griddata(validPoints, validValuesX, gridX, gridY);
-	// Mat remapY = griddata(validPoints, validValuesY, gridX, gridY);
-
-	return { remapX, remapY };
+	// griddata(validPoints, validValues, outRemapX, outRemapY);
+	griddataFaster(validPoints, validValues, outRemapX, outRemapY);
 }
 
-Mat warpWithRemap(const Mat& image, const vector<Point2f>& corners, const vector<vector<Point2f>>& sides, int outputSize = 160) {
-	auto maps = createRemapGrid(corners, sides, outputSize);
-	Mat warped;
-	remap(image, warped, maps.first, maps.second, INTER_LANCZOS4, BORDER_CONSTANT, Scalar(255, 255, 255));
-	return warped;
+void warpWithRemap(Mat& outWarped, const Mat& image, const vector<Point2f>& corners, const vector<vector<Point2f>>& sides, int outputSize, int offset, int outputPointsDist, cv::InterpolationFlags interpolationMethod = INTER_LINEAR) {
+	Mat remapX(outputSize, outputSize, CV_32F, Scalar(0));
+	Mat remapY(outputSize, outputSize, CV_32F, Scalar(0));
+	createRemapGrid(remapX, remapY, corners, sides, outputSize, offset, outputPointsDist);
+	remap(image, outWarped, remapX, remapY, interpolationMethod, BORDER_CONSTANT, Scalar(255, 255, 255));
 }
 
 Mat adaptiveBinarization(const Mat& image) {
@@ -496,26 +472,57 @@ Mat adaptiveBinarization(const Mat& image) {
 }
 
 #ifdef DEBUG_DRAW
-void testUnwarpPipeline(const Mat& image, const string& baseDebugPath) {
+
+struct TimeStamp {
+	string name;
+	chrono::_V2::system_clock::time_point start;
+	chrono::_V2::system_clock::time_point end;
+	double elapsed;
+	TimeStamp(const string& inName) :name(inName) {
+		start = chrono::high_resolution_clock::now();
+	};
+	void Stop() {
+		end = chrono::high_resolution_clock::now();
+		elapsed = chrono::duration<double, std::milli>(end - start).count();
+	};
+	double GetElapsed() const {
+		return chrono::duration<double, std::milli>(end - start).count();
+	}
+
+};
+
+void testUnwarpPreprocess(const Mat& image, const string& baseDebugPath, const UnwarpParams& params) {
+	vector<TimeStamp> timers;
+
 	Mat orig = image.clone();
 	// Бинаризация
+	timers.push_back(TimeStamp("Бинаризация"));
 	Mat thresh = adaptiveBinarization(image);
+	(timers.end() - 1)->Stop();
 
 	// Морфологические операции
+	timers.push_back(TimeStamp("Морфологические операции"));
 	Mat kernel = getStructuringElement(MORPH_RECT, Size(11, 11));
 	Mat morph;
 	morphologyEx(thresh, morph, MORPH_CLOSE, kernel);
+	(timers.end() - 1)->Stop();
 
 	// Поиск контура и углов
-	auto [contour, corners] = findMainContour(morph);
+	timers.push_back(TimeStamp("Поиск контура и углов"));
+	auto [contour, corners] = findMainContour(morph, params.approxPolyEpsilon);
 	corners = orderPoints(corners);
+	(timers.end() - 1)->Stop();
 
 	// Корректировка углов до ближайших точек контура
+	timers.push_back(TimeStamp("Корректировка углов до ближайших точек контура"));
 	corners = adjustCornersToContour(contour, corners);
 	corners = adjustCornersToContour(contour, corners);  // Второй проход для уточнения
+	(timers.end() - 1)->Stop();
 
 	// Фильтрация точек контура
-	contour = filterContourPoints(contour, corners, 6.0f);
+	timers.push_back(TimeStamp("Фильтрация точек контура"));
+	filterContourPoints(contour, corners, params.pointFilterDistanceThreshold);
+	(timers.end() - 1)->Stop();
 
 	// Разделение контура на корректные стороны
 	vector<vector<Point2f>> sides = splitContourIntoSides(contour, corners);
@@ -534,36 +541,41 @@ void testUnwarpPipeline(const Mat& image, const string& baseDebugPath) {
 	}
 
 	// Выпрямление с учетом кривизны
-	Mat warped = warpWithRemap(image, corners, sides, 160);
+	timers.push_back(TimeStamp("Выпрямление с учетом кривизны"));
+	Mat warped;
+	warpWithRemap(warped, image, corners, sides, params.outputSize, params.offset, params.outputPointsDist, INTER_LINEAR);
+	(timers.end() - 1)->Stop();
 
 	// Сохранение результатов на диск
 	std::filesystem::path basePath(baseDebugPath);
 	std::filesystem::create_directories(basePath);
 
 	//DEBUG
-	auto maps = createRemapGrid(corners, sides, 160);
+	Mat remapX(160, 160, CV_32F, Scalar(0));
+	Mat remapY(160, 160, CV_32F, Scalar(0));
+	createRemapGrid(remapX, remapY, corners, sides, params.outputSize, params.offset);
 
 	imwrite((basePath / "originalImage.png").string(), orig);
+	imwrite((basePath / "morphImage.png").string(), morph);
 	imwrite((basePath / "binaryImage.png").string(), thresh);
 	imwrite((basePath / "debugImage.png").string(), debugImg);
 	imwrite((basePath / "warpedImage.png").string(), warped);
 	double minVal, maxVal;
-	minMaxLoc(maps.first, &minVal, &maxVal);
-	imwrite((basePath / "mapX.png").string(), (maps.first - minVal) / (maxVal - minVal) * 255);
-	minMaxLoc(maps.second, &minVal, &maxVal);
-	imwrite((basePath / "mapY.png").string(), (maps.second - minVal) / (maxVal - minVal) * 255);
-	// imwrite((basePath / "mapX.png").string(), maps.first );
-	// imwrite((basePath / "mapY.png").string(), maps.second);
+	minMaxLoc(remapX, &minVal, &maxVal);
+	imwrite((basePath / "mapX.png").string(), (remapX - minVal) / (maxVal - minVal) * 255);
+	minMaxLoc(remapY, &minVal, &maxVal);
+	imwrite((basePath / "mapY.png").string(), (remapY - minVal) / (maxVal - minVal) * 255);
 
-	// imwrite("originalImage.png", orig);
-	// imwrite("binaryImage.png", thresh);
-	// imwrite("debugImage.png", debugImg);
-	// imwrite("warpedImage.png", warped);
+	std::ofstream timersFile;
+	timersFile.open((basePath / "timers.txt").string());
+	for (const auto& t : timers) {
+		timersFile << t.name << t.GetElapsed() << endl;
+	}
+	timersFile.close();
 }
 #endif
 
-bool cvUnwarpPreprocess(Mat& outImage) {
-	Mat& image = outImage;
+void cvUnwarpPreprocess(Mat& outResult, const Mat& image, const UnwarpParams& params) {
 	// Бинаризация
 	Mat thresh = adaptiveBinarization(image);
 
@@ -573,7 +585,7 @@ bool cvUnwarpPreprocess(Mat& outImage) {
 	morphologyEx(thresh, morph, MORPH_CLOSE, kernel);
 
 	// Поиск контура и углов
-	auto [contour, corners] = findMainContour(morph);
+	auto [contour, corners] = findMainContour(morph, params.approxPolyEpsilon);
 	corners = orderPoints(corners);
 
 	// Корректировка углов до ближайших точек контура
@@ -581,10 +593,10 @@ bool cvUnwarpPreprocess(Mat& outImage) {
 	corners = adjustCornersToContour(contour, corners);  // Второй проход для уточнения
 
 	// Фильтрация точек контура
-	contour = filterContourPoints(contour, corners, 6.0f);
+	filterContourPoints(contour, corners, params.pointFilterDistanceThreshold);
 
 	// Разделение контура на корректные стороны
 	vector<vector<Point2f>> sides = splitContourIntoSides(contour, corners);
-
-	image = warpWithRemap(image, corners, sides, 160);
+	//INTER_LANCZOS4 TOOOO SLOOOW
+	warpWithRemap(outResult, image, corners, sides, params.outputSize, params.offset, params.outputPointsDist, INTER_LINEAR);
 }
