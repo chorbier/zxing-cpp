@@ -7,7 +7,13 @@ include (GNUInstallDirs)
 
 find_package(OpenCV QUIET)
 if (OpenCV_FOUND)
-    add_executable (DebugReadbardcode DebugReadbardcode.cpp)
+    set(DEBUG_SOURCES
+        DebugReadbardcode.cpp
+        libs/UnwarpPreprocess.cpp
+        libs/delaunator.cpp
+    )
+    add_executable (DebugReadbardcode ${DEBUG_SOURCES})
+    target_include_directories (DebugReadbardcode PRIVATE libs)
     target_include_directories (DebugReadbardcode PRIVATE ${OpenCV_INCLUDE_DIRS})
     target_link_libraries (DebugReadbardcode ZXing::ZXing ${OpenCV_LIBS})
     # target_link_libraries (DebugReadbardcode ZXing::ZXing ${OpenCV_LIBS} DebugDrawStuff)
