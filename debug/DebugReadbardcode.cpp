@@ -16,6 +16,7 @@
 
 
 #include "datamatrix/DMReader.h"
+#include "datamatrix/DMDetector.h"
 #include "Point.h"
 // #include "DebugDrawStuff.h"
 
@@ -240,6 +241,14 @@ std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, 
 {
 	std::unique_ptr<Results> zxing_results = nullptr;
 
+	try {
+		zxing_results = std::make_unique<Results>(readbarcodescrpt_samplegridv1(ImageViewFromMat(image), hints, true));
+	} catch (...) {
+		zxing_results = nullptr;
+	}
+
+	return zxing_results;
+
 	std::vector<cv::Point2f> edges = findEdgesOfSquare(image_cv);
 	std::vector<PointF> pointFs;
 	pointFs.reserve(edges.size());
@@ -254,19 +263,46 @@ std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, 
 	auto start = std::chrono::high_resolution_clock::now();
 	try {
 		zxing_results = std::make_unique<Results>(
-			// readbarcodescrpt_detector_v1_samplegridv1(ImageViewFromMat(image), pointFs[0], pointFs[1], pointFs[2], pointFs[3], hints));
-			readbarcodescrpt_samplegridv1(ImageViewFromMat(image), hints, true));
+			readbarcodescrpt_detector_v1_samplegridv1(ImageViewFromMat(image), pointFs[0], pointFs[1], pointFs[2], pointFs[3], hints));
 	} catch (...) {
 		zxing_results = nullptr;
 	}
 	tryToDecodeTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
-
-
 	return zxing_results;
 }
 }
+
+
+
 int main(int argc, char *argv[])
 {
+
+
+	int testPointsCount = 20;
+	float scale = 0.1;
+	std::vector<float> vx1[] {
+		{0,0,0,0,0},
+		{0.30000001192092896, 0.09311136603355408, 0.003913822118192911, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+		{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.0025067664682865143, -0.05963696539402008, -0.19214721024036407},
+		{0.0, 0.08199295401573181, 0.1554209440946579, 0.18605205416679382, 0.19519716501235962, 0.18605205416679382, 0.1554209440946579, 0.08199295401573181, 0.0}
+	};
+	// Вертикальный вектор (5x1)
+	std::vector<cv::Mat> warps;
+	for(auto& toResample : vx1) {
+		auto& target = warps.emplace_back();
+		cv::resize(cv::Mat_<float>(toResample.size(), 1, toResample.data()), target, {1, testPointsCount}, 0, 0, cv::INTER_LINEAR);
+		target *= scale;
+	}
+
+	uint8_t warp_variants_pairs[][2] {{0,0},{0,1},{1,0},{0,2},{2,0},{0,3},{3,0}};
+	std::vector<std::pair<cv::Mat, cv::Mat>> warp_variants;
+	for(const auto& [wx,wy] : warp_variants_pairs) {
+		warp_variants.push_back({warps[wx], warps[wy]});
+	}
+
+
+
+
 	const auto hints = ZXing::DecodeHints()
 						   .setFormats(ZXing::BarcodeFormat::EAN13 | ZXing::BarcodeFormat::EAN8 | ZXing::BarcodeFormat::DataMatrix
 									   | ZXing::BarcodeFormat::QRCode | ZXing::BarcodeFormat::PDF417)
@@ -281,7 +317,8 @@ int main(int argc, char *argv[])
 
     fs::path debugOutput("/home/chorbier/dm_debug");
 
-    std::string folder("/home/chorbier/dm-tests/selected_frames_dm_videos");
+    // std::string folder("/home/chorbier/dm-tests/cropped_extracted_frames_printed_codes_videos");
+    std::string folder("/home/chorbier/dm-tests/notebook_codes");
     std::vector<cv::String> filenames;
     cv::glob(folder, filenames, false);
 
@@ -301,19 +338,16 @@ int main(int argc, char *argv[])
 		
 		// ZXing::debugOutputFilepath = ZXing::debugOutputFolder / path.filename();
 
-		cv::Mat unwarpedImage;
 
 		std::string debugBase = (debugOutput / fs::path(fileName).stem()).string();
 		auto startUnwarp = std::chrono::high_resolution_clock::now();
-		testUnwarpPreprocess(image_cv, debugBase, UnwarpParams());
-		// cvUnwarpPreprocess(unwarpedImage, image_cv);
-		// std::cout << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - startUnwarp).count() << " testUnwarpTime "<< fs::path(fileName).stem() << std::endl;
+		// testUnwarpPreprocess(image_cv, debugBase, UnwarpParams());
+		
+		// testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warps[0], warps[1], debugBase, UnwarpParams(), testPointsCount);
+		cntTotal++;
 
-		std::unique_ptr<ZXing::Results> zxing_results_ptr;
-		int width = image_cv.cols;
-		int height = image_cv.rows;
-		std::cout << "file: \t" << fs::path(fileName).stem().string() << std::endl;
-		if (width * height >= 100) {
+		auto ProcessImage = [&](const cv::Mat& image) -> bool {
+
 			for (int candidate = 0; candidate <= 6; candidate++) {
 				cv::Mat image_candidate = ZXing::get_next_possible_image(image_cv, candidate);
 				std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image_cv, image_candidate, hints);
@@ -336,18 +370,29 @@ int main(int argc, char *argv[])
 				}
 
 				if(found) {
-					break;
+					return true;
 				}
-				// if(undetected) {
-				// 	auto postfix = "_pp"+std::to_string(candidate) + std::string(path.extension());
-				// 	postfix = std::string(path.stem()) + postfix;
-				// 	cv::imwrite(ZXing::debugOutputFolder/ "undetected" / postfix, image_candidate);
-				// }
 
 				image_candidate.release();
 			}
+			return false;
+		};
+		
+		// ProcessImage(image_cv);
+		
+		if(!ProcessImage(image_cv)) {
+			cv::Mat unwarpedImage;
+			for(auto& v : warp_variants) {
+				testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, ProcessImage, debugBase, UnwarpParams(), testPointsCount);
+			}
 		}
-		cntTotal++;
+
+		// cvUnwarpPreprocess(unwarpedImage, image_cv);
+		// std::cout << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - startUnwarp).count() << " testUnwarpTime "<< fs::path(fileName).stem() << std::endl;
+
+		std::unique_ptr<ZXing::Results> zxing_results_ptr;
+		std::cout << "file: \t" << fs::path(fileName).stem().string() << std::endl;
+
 		// std::cout << "Done " << cntTotal << "(" << cnt << ")" << " of " <<  filenames.size() << "\t\r" << std::flush;
 	}
 

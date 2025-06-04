@@ -363,6 +363,37 @@ vector<Point2f> adjustCornersToContour(const vector<Point>& contour, const vecto
 	return adjusted;
 }
 
+void createGridDataCurved(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& corners, const Mat& xOfs, const Mat& yOfs, int outputSize = 160, int offset = 25, int warpPointsCout = 40) {
+	vector<Point2f> dstCorners = {
+		Point2f(offset, offset),
+		Point2f(outputSize - offset, offset),
+		Point2f(outputSize - offset, outputSize - offset),
+		Point2f(offset, outputSize - offset)
+	};
+
+	//     # 1---0
+	//     # |   |
+	//     # 2---3
+
+	vector<Point2f> validPoints;
+	vector<Point2f> validValues;
+
+	for(int y = 0; y < warpPointsCout; y++) {
+		float yAlpha = float(y) / float(warpPointsCout - 1);
+		float validY = offset + float(outputSize - 2 * offset) * yAlpha; 
+		for(int x = 0; x < warpPointsCout; x++) {
+			float xAlpha = float(x) / float(warpPointsCout - 1);
+			float xSrc = xAlpha + xOfs.at<float>(0, y);
+			float ySrc = yAlpha + yOfs.at<float>(0, x);
+
+			validPoints.push_back({offset + float(outputSize - 2 * offset) * xAlpha, validY});
+			validValues.push_back((corners[0] * (1.0 - ySrc) + corners[3] * ySrc) * (1.0 - xSrc) + (corners[1] * (1.0 - ySrc) + corners[2] * ySrc) * xSrc);
+		}
+	}
+	// griddata(validPoints, validValues, outRemapX, outRemapY);
+	griddataFaster(validPoints, validValues, outRemapX, outRemapY);
+}
+
 void createRemapGrid(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& corners, const vector<vector<Point2f>>& sides, int outputSize = 160, int offset = 25, int outputPointsDist = 4) {
 	vector<Point2f> dstCorners = {
 		Point2f(offset, offset),
@@ -477,16 +508,22 @@ struct TimeStamp {
 	string name;
 	chrono::_V2::system_clock::time_point start;
 	chrono::_V2::system_clock::time_point end;
-	double elapsed;
+	uint32_t cnt = 0;
+	double elapsed=0;
 	TimeStamp(const string& inName) :name(inName) {
 		start = chrono::high_resolution_clock::now();
 	};
+	void Start() {
+		start = chrono::high_resolution_clock::now();
+	}
 	void Stop() {
 		end = chrono::high_resolution_clock::now();
-		elapsed = chrono::duration<double, std::milli>(end - start).count();
+		elapsed+=chrono::duration<double, std::milli>(end - start).count();
+		cnt++;
 	};
 	double GetElapsed() const {
-		return chrono::duration<double, std::milli>(end - start).count();
+		return elapsed;
+		// return chrono::duration<double, std::milli>(end - start).count();
 	}
 
 };
@@ -573,9 +610,124 @@ void testUnwarpPreprocess(const Mat& image, const string& baseDebugPath, const U
 	}
 	timersFile.close();
 }
+
+bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult, const std::string& baseDebugPath, const UnwarpParams& params, int warpPointsCout) {
+	// Бинаризация
+	vector<TimeStamp> timers;
+	std::filesystem::path basePath(baseDebugPath);
+	std::filesystem::create_directories(basePath);
+
+	auto printTimers = [&timers, basePath]() {
+		std::ofstream timersFile;
+		timersFile.open((basePath / "timers.txt").string());
+		float summ = 0;
+		for (const auto& t : timers) {
+			summ+=t.GetElapsed();
+			if(t.cnt == 1) {
+				timersFile << t.name << ": " << t.GetElapsed() << endl;
+			} else {
+				timersFile << t.name << ": " << " cnt: "<< t.cnt << " timeTotal: " << t.GetElapsed() << " average: " << t.GetElapsed() / t.cnt << endl;
+			}
+		}
+		timersFile << "total: " << summ << endl;
+		timersFile.close();
+	};
+
+	int maxSize = 320;
+
+	timers.push_back(TimeStamp("Бинаризация"));
+
+	Mat thresh;
+	float scale = 1;
+	if(std::max(image.cols, image.rows) > maxSize) {
+		Mat resized;
+		scale = static_cast<float>(maxSize) / static_cast<float>(std::max(image.cols, image.rows));
+		cv::resize(image, resized, {static_cast<int>(static_cast<float>(image.rows) * scale), static_cast<int>(static_cast<float>(image.cols) * scale)}, 0,0, cv::INTER_LINEAR);
+		thresh = adaptiveBinarization(resized);
+	}
+	else {
+		thresh = adaptiveBinarization(image);
+	}
+	(timers.end() - 1)->Stop();
+
+	// Морфологические операции
+	timers.push_back(TimeStamp("Морфологические операции"));
+	Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(15, 15));
+	Mat morph;
+	morphologyEx(thresh, morph, MORPH_CLOSE, kernel);
+	(timers.end() - 1)->Stop();
+
+	// Поиск контура и углов
+	timers.push_back(TimeStamp("Поиск контура и углов"));
+	auto [contour, corners] = findMainContour(morph, params.approxPolyEpsilon);
+	corners = orderPoints(corners);
+	(timers.end() - 1)->Stop();
+
+	// Корректировка углов до ближайших точек контура
+	timers.push_back(TimeStamp("Корректировка углов до ближайших точек контура"));
+	corners = adjustCornersToContour(contour, corners);
+	corners = adjustCornersToContour(contour, corners);  // Второй проход для уточнения
+	(timers.end() - 1)->Stop();
+
+	if(scale != 1) {
+		for(auto& c : corners) {
+			c /= scale;
+		}
+	}
+
+	Mat debugImg = image.clone();
+	for (size_t i = 0; i < corners.size(); ++i) {
+		circle(debugImg, corners[i], 4, Scalar(0, 0, 255), -1);
+		putText(debugImg, to_string(i), Point(corners[i].x + 10, corners[i].y + 10),
+				FONT_HERSHEY_SIMPLEX, 0.5, Scalar(255, 0, 0), 1);
+	}
+
+	imwrite((basePath / "originalImage.png").string(), image);
+	imwrite((basePath / "morphImage.png").string(), morph);
+	imwrite((basePath / "binaryImage.png").string(), thresh);
+	imwrite((basePath / "debugImage.png").string(), debugImg);
+
+
+	int unwarpCnt = 0;
+	auto& unwarpTimer = timers.emplace_back("Выпрямление с учетом кривизны");
+	auto& testTimer = timers.emplace_back("Проверка выпрямления");
+	Mat remapX(params.outputSize, params.outputSize, CV_32F, Scalar(0));
+	Mat remapY(params.outputSize, params.outputSize, CV_32F, Scalar(0));
+
+	for(const auto& [xOfs, yOfs] : warps) {
+		if(xOfs.rows != warpPointsCout || yOfs.rows != warpPointsCout) {
+			throw invalid_argument("Offset.rows and warpPointsCout must be equal");
+		}
+		unwarpTimer.Start();
+		createGridDataCurved(remapX, remapY, corners, xOfs, yOfs, params.outputSize, params.offset, warpPointsCout);
+		remap(image, outResult, remapX, remapY, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
+		unwarpTimer.Stop();
+		imwrite((basePath / ("warpedImage_"+std::to_string(unwarpCnt)+".png")).string(), outResult);
+		unwarpCnt++;
+		testTimer.Start();
+		bool success = processResult(outResult);
+		testTimer.Stop();
+		if(success) {
+			printTimers();
+			return true;
+		}
+	}
+
+	printTimers();
+
+	// double minVal, maxVal;
+	// minMaxLoc(remapX, &minVal, &maxVal);
+	// imwrite((basePath / "mapX.png").string(), (remapX - minVal) / (maxVal - minVal) * 255);
+	// minMaxLoc(remapY, &minVal, &maxVal);
+	// imwrite((basePath / "mapY.png").string(), (remapY - minVal) / (maxVal - minVal) * 255);
+
+	return false;
+
+}
+
 #endif
 
-void cvUnwarpPreprocess(Mat& outResult, const Mat& image, const UnwarpParams& params) {
+void cvUnwarpPreprocess(cv::Mat& outResult, const cv::Mat& image, const UnwarpParams& params) {
 	// Бинаризация
 	Mat thresh = adaptiveBinarization(image);
 
@@ -599,4 +751,56 @@ void cvUnwarpPreprocess(Mat& outResult, const Mat& image, const UnwarpParams& pa
 	vector<vector<Point2f>> sides = splitContourIntoSides(contour, corners);
 	//INTER_LANCZOS4 TOOOO SLOOOW
 	warpWithRemap(outResult, image, corners, sides, params.outputSize, params.offset, params.outputPointsDist, INTER_LINEAR);
+}
+
+
+bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult,const UnwarpParams& params, int warpPointsCout) {
+	// Бинаризация
+	int maxSize = 320;
+
+	Mat thresh;
+	float scale = 1;
+	if(std::max(image.cols, image.rows) > maxSize) {
+		Mat resized;
+		scale = static_cast<float>(maxSize) / static_cast<float>(std::max(image.cols, image.rows));
+		cv::resize(image, resized, {static_cast<int>(static_cast<float>(image.rows) * scale), static_cast<int>(static_cast<float>(image.cols) * scale)}, 0,0, cv::INTER_LINEAR);
+		thresh = adaptiveBinarization(resized);
+	}
+	else {
+		thresh = adaptiveBinarization(image);
+	}
+
+	// Морфологические операции
+	Mat kernel = getStructuringElement(MORPH_RECT, Size(11, 11));
+	Mat morph;
+	morphologyEx(thresh, morph, MORPH_CLOSE, kernel);
+
+	// Поиск контура и углов
+	auto [contour, corners] = findMainContour(morph, params.approxPolyEpsilon);
+	corners = orderPoints(corners);
+
+	// Корректировка углов до ближайших точек контура
+	corners = adjustCornersToContour(contour, corners);
+	corners = adjustCornersToContour(contour, corners);  // Второй проход для уточнения
+
+	if(scale != 1.0) {
+		for(auto& c : corners) {
+			c /= scale;
+		}
+	}
+
+	Mat remapX(params.outputSize, params.outputSize, CV_32F, Scalar(0));
+	Mat remapY(params.outputSize, params.outputSize, CV_32F, Scalar(0));
+
+	for(const auto& [xOfs, yOfs] : warps) {
+		if(xOfs.rows != warpPointsCout || yOfs.rows != warpPointsCout) {
+			throw invalid_argument("Offset.rows and warpPointsCout must be equal");
+		}
+		createGridDataCurved(remapX, remapY, corners, xOfs, yOfs, params.outputSize, params.offset, warpPointsCout);
+		remap(image, outResult, remapX, remapY, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
+		if(processResult(outResult)) {
+			return true;
+		}
+	}
+	return false;
 }
