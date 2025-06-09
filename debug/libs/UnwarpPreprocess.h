@@ -14,7 +14,7 @@ struct UnwarpParams
 
 #ifdef DEBUG_DRAW
 void testUnwarpPreprocess(const cv::Mat& image, const std::string& baseDebugPath, const UnwarpParams& params);
-bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult, const std::string& baseDebugPath, const UnwarpParams& params, int warpPointsCout);
+bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult, const std::string& baseDebugPath, const UnwarpParams& params, int warpPointsCout);
 #endif
 
 void cvUnwarpPreprocess(cv::Mat& outResult, const cv::Mat& image, const UnwarpParams& params);

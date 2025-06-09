@@ -378,15 +378,15 @@ void createGridDataCurved(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>&
 	vector<Point2f> validPoints;
 	vector<Point2f> validValues;
 
-	for(int y = 0; y < warpPointsCout; y++) {
+	for (int y = 0; y < warpPointsCout; y++) {
 		float yAlpha = float(y) / float(warpPointsCout - 1);
-		float validY = offset + float(outputSize - 2 * offset) * yAlpha; 
-		for(int x = 0; x < warpPointsCout; x++) {
+		float validY = offset + float(outputSize - 2 * offset) * yAlpha;
+		for (int x = 0; x < warpPointsCout; x++) {
 			float xAlpha = float(x) / float(warpPointsCout - 1);
 			float xSrc = xAlpha + xOfs.at<float>(0, y);
 			float ySrc = yAlpha + yOfs.at<float>(0, x);
 
-			validPoints.push_back({offset + float(outputSize - 2 * offset) * xAlpha, validY});
+			validPoints.push_back({ offset + float(outputSize - 2 * offset) * xAlpha, validY });
 			validValues.push_back((corners[0] * (1.0 - ySrc) + corners[3] * ySrc) * (1.0 - xSrc) + (corners[1] * (1.0 - ySrc) + corners[2] * ySrc) * xSrc);
 		}
 	}
@@ -502,6 +502,309 @@ Mat adaptiveBinarization(const Mat& image) {
 	return thresh;
 }
 
+cv::Point2d normalizeVector(const cv::Point2d& v) {
+	double norm = cv::norm(v);
+	return norm > 0 ? v / norm : v;
+}
+
+// Finds indices of new corners in the contour
+std::vector<int> findNewCornersIndices(const std::vector<cv::Point2f>& contour, const std::vector<cv::Point2f>& corners) {
+	cv::Point2f basis0 = corners[2] - corners[0];
+	cv::Point2f basis1 = corners[3] - corners[1];
+	basis0 = normalizeVector(basis0);
+	basis1 = normalizeVector(basis1);
+
+	int minIndex02 = 0;
+	int minIndex13 = 0;
+	int maxIndex02 = 0;
+	int maxIndex13 = 0;
+
+	double min02dot = contour[0].dot(basis0);
+	double min13dot = contour[0].dot(basis1);
+	double max02dot = min02dot;
+	double max13dot = min13dot;
+
+	for (size_t i = 1; i < contour.size(); i++) {
+		double dot02 = contour[i].dot(basis0);
+		double dot13 = contour[i].dot(basis1);
+		if (dot02 < min02dot) {
+			min02dot = dot02; minIndex02 = i;
+		}
+		if (dot02 > max02dot) {
+			max02dot = dot02; maxIndex02 = i;
+		}
+		if (dot13 < min13dot) {
+			min13dot = dot13; minIndex13 = i;
+		}
+		if (dot13 > max13dot) {
+			max13dot = dot13; maxIndex13 = i;
+		}
+	}
+
+	std::vector<int> indices = { minIndex02, minIndex13, maxIndex02, maxIndex13 };
+	std::sort(indices.begin(), indices.end());
+	// indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+	return std::move(indices);
+}
+
+void fitPolynomial(const std::vector<float>& x, const std::vector<float>& y,
+				  std::vector<float>& coeffs, int degree) {
+	cv::Mat X(x.size(), degree + 1, CV_32F);
+	cv::Mat Y(y.size(), 1, CV_32F);
+
+	for (size_t i = 0; i < x.size(); ++i) {
+		for (int j = 0; j <= degree; ++j) {
+			X.at<float>(i, j) = std::pow(x[i], j);
+		}
+		Y.at<float>(i, 0) = y[i];
+	}
+
+	cv::Mat C;
+	cv::solve(X, Y, C, cv::DECOMP_QR);
+
+	coeffs.resize(degree + 1);
+	for (int i = 0; i <= degree; ++i) {
+		coeffs[i] = C.at<float>(i, 0);
+	}
+}
+
+// Polynomial evaluation
+float evaluatePolynomial(const std::vector<float>& coeffs, float x) {
+	float result = 0.0;
+	for (size_t i = 0; i < coeffs.size(); ++i) {
+		result += coeffs[i] * std::pow(x, i);
+	}
+	return result;
+}
+
+void smoothAndResampleWithPolyfit(const std::vector<float>& originalX, const std::vector<float>& originalY, std::vector<float>& newX, std::vector<float>& smoothedY, int targetPoints = 20, int polyDegree = 3) {
+	// Adjust degree if there aren't enough points
+	polyDegree = std::min(static_cast<int>(originalX.size()) - 1, polyDegree);
+	if (polyDegree < 1) {
+		newX = originalX;
+		smoothedY = originalY;
+		return;
+	}
+
+	std::vector<float> coeffs;
+	fitPolynomial(originalX, originalY, coeffs, polyDegree);
+
+	float xMin = *std::min_element(originalX.begin(), originalX.end());
+	float xMax = *std::max_element(originalX.begin(), originalX.end());
+
+	newX.resize(targetPoints);
+	smoothedY.resize(targetPoints);
+
+	for (int i = 0; i < targetPoints; ++i) {
+		newX[i] = xMin + i * (xMax - xMin) / (targetPoints - 1);
+		smoothedY[i] = evaluatePolynomial(coeffs, newX[i]);
+	}
+}
+
+std::vector<float> resampleContourSide(const cv::Point2f& startPoint, const cv::Point2f& endPoint, const std::vector<cv::Point2f>& points) {
+	cv::Point2f unitVector = endPoint - startPoint;
+	double norm = cv::norm(unitVector);
+	if (norm > 0) unitVector /= norm;
+
+	cv::Point2f perpVector(-unitVector.y, unitVector.x);
+
+	std::vector<float> originalX;
+	originalX.reserve(points.size());
+	std::vector<float> originalY;
+	originalY.reserve(points.size());
+
+	for (size_t i = 0; i < points.size(); ++i) {
+		cv::Point2f movedPoint = points[i] - startPoint;
+		originalX.push_back(movedPoint.dot(unitVector));
+		originalY.push_back(movedPoint.dot(perpVector));
+	}
+
+	std::vector<float> newX, smoothedY;
+	smoothAndResampleWithPolyfit(originalX, originalY, newX, smoothedY, 20, 3);
+
+	// std::vector<cv::Point2f> result(newX.size());
+	// for (size_t i = 0; i < newX.size(); ++i) {
+	//     result[i] = unitVector * newX[i] + perpVector * smoothedY[i] + startPoint;
+	// }
+
+	return smoothedY;
+}
+
+std::vector<std::vector<float>> resampleContour(std::vector<int>& cornerIndices, const std::vector<cv::Point2f>& contour) {
+	// std::vector<int> cornerIndices = findNewCornersIndices(contour, oldCorners);
+
+	std::vector<cv::Point2f> newCorners;
+	for (int i : cornerIndices) {
+		newCorners.push_back(contour[i]);
+	}
+
+	std::vector<std::vector<float>> contourSides;
+	for (size_t i = 0; i < cornerIndices.size() - 1; ++i) {
+		std::vector<cv::Point2f> sidePoints(contour.begin() + cornerIndices[i], contour.begin() + cornerIndices[i + 1] + 1);
+		contourSides.push_back(resampleContourSide(contour[cornerIndices[i]], contour[cornerIndices[i + 1]], sidePoints));
+	}
+
+	// Handle the last side that wraps around
+	std::vector<cv::Point2f> lastSidePoints;
+	lastSidePoints.insert(lastSidePoints.end(), contour.begin() + cornerIndices.back(), contour.end());
+	lastSidePoints.insert(lastSidePoints.end(), contour.begin(), contour.begin() + cornerIndices[0] + 1);
+	contourSides.push_back(resampleContourSide(contour[cornerIndices.back()], contour[cornerIndices[0]], lastSidePoints));
+
+	return contourSides;
+}
+
+void createRemapGrid2(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& corners, const vector<vector<float>>& sideOffsets, int inputSize, int inputOffset, int outputSize = 160, int offset = 25) {
+	// vector<Point2f> dstCorners = {
+	// 	Point2f(offset, offset),
+	// 	Point2f(outputSize - offset, offset),
+	// 	Point2f(outputSize - offset, outputSize - offset),
+	// 	Point2f(offset, outputSize - offset)
+	// };
+
+	//     # 0---0---1
+	//     # |       |
+	//     # 3       1
+	//     # |       |
+	//     # 3---2---2
+
+	vector<Point2f> validPoints;
+	vector<Point2f> validValues;
+
+	const auto& sideT = sideOffsets[0];
+	const auto& sideR = sideOffsets[1];
+	const auto& sideB = sideOffsets[2];
+	const auto& sideL = sideOffsets[3];
+
+	int resolution = sideT.size();
+	validPoints.reserve(resolution * resolution + resolution * 4 + 4);
+	validValues.reserve(validPoints.size());
+
+	auto solveForAlphas = [&](int x, int y, float alphaX, float alphaY) {
+		float validX = offset + float(outputSize - 2 * offset) * alphaX;
+		float validY = offset + float(outputSize - 2 * offset) * alphaY;
+
+		validPoints.emplace_back(validX, validY);
+		// Point2f src = (corners[0] * alphaX + corners[1] * (1.0 - alphaX)) * alphaY + (corners[3] * alphaX + corners[2] * (1.0 - alphaX)) * (1.0 - alphaY);
+		Point2f src(
+			inputOffset + float(inputSize - 2 * inputOffset) * alphaX,
+			inputOffset + float(inputSize - 2 * inputOffset) * alphaY
+		);
+		src.x += sideL[resolution - y - 1] * (1.0 - alphaX) - sideR[y] * alphaX;
+		src.y += sideB[resolution - x - 1] * alphaY - sideT[x] * (1.0 - alphaY);
+		validValues.push_back(src);
+	};
+
+	for (int y = 0; y < resolution; y++) {
+		float alphaY = float(y) / float(resolution - 1);
+		for (int x = 0; x < resolution; x++) {
+			float alphaX = float(x) / float(resolution - 1);
+			solveForAlphas(x, y, alphaX, alphaY);
+		}
+	}
+	float alphaCorners = float(offset) / float(outputSize - offset * 2);
+	solveForAlphas(0, 0, -alphaCorners, -alphaCorners);
+	solveForAlphas(resolution - 1, 0, 1.0 + alphaCorners, -alphaCorners);
+	solveForAlphas(resolution - 1, resolution - 1, 1.0 + alphaCorners, 1.0 + alphaCorners);
+	solveForAlphas(0, resolution - 1, -alphaCorners, 1.0 + alphaCorners);
+
+	for (int i = 0; i < resolution; i++) {
+		float alpha = float(i) / float(resolution - 1);
+		solveForAlphas(i, 0, alpha, -alphaCorners);
+		solveForAlphas(i, resolution - 1, alpha, 1.0 + alphaCorners);
+		solveForAlphas(0, i, -alphaCorners, -alphaCorners);
+		solveForAlphas(resolution - 1, i, 1.0 + alphaCorners, -alphaCorners);
+	}
+
+	// griddata(validPoints, validValues, outRemapX, outRemapY);
+	griddataFaster(validPoints, validValues, outRemapX, outRemapY);
+}
+
+void createRemapGrid3(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& corners, const vector<vector<float>>& sideOffsets, int inputSize, int inputOffset, int outputSize = 160, int offset = 25) {
+	// vector<Point2f> dstCorners = {
+	// 	Point2f(offset, offset),
+	// 	Point2f(outputSize - offset, offset),
+	// 	Point2f(outputSize - offset, outputSize - offset),
+	// 	Point2f(offset, outputSize - offset)
+	// };
+
+	//     # 0---0---1
+	//     # |       |
+	//     # 3       1
+	//     # |       |
+	//     # 3---2---2
+
+	vector<Point2f> validPoints;
+	vector<Point2f> validValues;
+
+	const auto& sideT = sideOffsets[0];
+	const auto& sideR = sideOffsets[1];
+	const std::vector sideB(sideOffsets[2].rbegin(), sideOffsets[2].rend());
+	const std::vector sideL(sideOffsets[3].rbegin(), sideOffsets[3].rend());
+
+	int resolution = sideT.size();
+
+	int scale = (outputSize / resolution);
+	if (scale & 1) scale++;
+
+	cv::Mat_<cv::Point2f> ofs(resolution, resolution);
+	for (size_t y = 0; y < resolution; y++) {
+		float alphaY = float(y) / float(resolution - 1);
+		for (size_t x = 0; x < resolution; x++) {
+			float alphaX = float(x) / float(resolution - 1);
+			ofs.at<cv::Point2f>({ x,y }) = {
+				sideL[y] * (1.0 - alphaX) - sideR[y] * alphaX,
+				sideT[x] * (1.0 - alphaY) - sideB[x] * alphaY,
+			};
+		}
+	}
+
+	cv::resize(ofs, ofs, { scale, scale }, 0, 0, cv::INTER_LINEAR_EXACT);
+
+	validPoints.reserve(resolution * resolution + resolution * 4 + 4);
+	validValues.reserve(validPoints.size());
+
+	// cv::Mat_<float>(toResample.size(), 1, toResample.data())
+
+	auto solveForAlphas = [&](int x, int y, float alphaX, float alphaY) {
+		float validX = offset + float(outputSize - 2 * offset) * alphaX;
+		float validY = offset + float(outputSize - 2 * offset) * alphaY;
+
+		validPoints.emplace_back(validX, validY);
+		// Point2f src = (corners[0] * alphaX + corners[1] * (1.0 - alphaX)) * alphaY + (corners[3] * alphaX + corners[2] * (1.0 - alphaX)) * (1.0 - alphaY);
+		Point2f src(
+			inputOffset + float(inputSize - 2 * inputOffset) * alphaX,
+			inputOffset + float(inputSize - 2 * inputOffset) * alphaY
+		);
+		src.x += sideL[resolution - y - 1] * (1.0 - alphaX) - sideR[y] * alphaX;
+		src.y += sideB[resolution - x - 1] * alphaY - sideT[x] * (1.0 - alphaY);
+		validValues.push_back(src);
+	};
+
+	for (int y = 0; y < resolution; y++) {
+		float alphaY = float(y) / float(resolution - 1);
+		for (int x = 0; x < resolution; x++) {
+			float alphaX = float(x) / float(resolution - 1);
+			solveForAlphas(x, y, alphaX, alphaY);
+		}
+	}
+	float alphaCorners = float(offset) / float(outputSize - offset * 2);
+	solveForAlphas(0, 0, -alphaCorners, -alphaCorners);
+	solveForAlphas(resolution - 1, 0, 1.0 + alphaCorners, -alphaCorners);
+	solveForAlphas(resolution - 1, resolution - 1, 1.0 + alphaCorners, 1.0 + alphaCorners);
+	solveForAlphas(0, resolution - 1, -alphaCorners, 1.0 + alphaCorners);
+
+	for (int i = 0; i < resolution; i++) {
+		float alpha = float(i) / float(resolution - 1);
+		solveForAlphas(i, 0, alpha, -alphaCorners);
+		solveForAlphas(i, resolution - 1, alpha, 1.0 + alphaCorners);
+		solveForAlphas(0, i, -alphaCorners, -alphaCorners);
+		solveForAlphas(resolution - 1, i, 1.0 + alphaCorners, -alphaCorners);
+	}
+
+	// griddata(validPoints, validValues, outRemapX, outRemapY);
+	griddataFaster(validPoints, validValues, outRemapX, outRemapY);
+}
+
 #ifdef DEBUG_DRAW
 
 struct TimeStamp {
@@ -509,7 +812,7 @@ struct TimeStamp {
 	chrono::_V2::system_clock::time_point start;
 	chrono::_V2::system_clock::time_point end;
 	uint32_t cnt = 0;
-	double elapsed=0;
+	double elapsed = 0;
 	TimeStamp(const string& inName) :name(inName) {
 		start = chrono::high_resolution_clock::now();
 	};
@@ -518,7 +821,7 @@ struct TimeStamp {
 	}
 	void Stop() {
 		end = chrono::high_resolution_clock::now();
-		elapsed+=chrono::duration<double, std::milli>(end - start).count();
+		elapsed += chrono::duration<double, std::milli>(end - start).count();
 		cnt++;
 	};
 	double GetElapsed() const {
@@ -611,7 +914,7 @@ void testUnwarpPreprocess(const Mat& image, const string& baseDebugPath, const U
 	timersFile.close();
 }
 
-bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult, const std::string& baseDebugPath, const UnwarpParams& params, int warpPointsCout) {
+bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult, const std::string& baseDebugPath, const UnwarpParams& params, int warpPointsCout) {
 	// Бинаризация
 	vector<TimeStamp> timers;
 	std::filesystem::path basePath(baseDebugPath);
@@ -622,11 +925,12 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, co
 		timersFile.open((basePath / "timers.txt").string());
 		float summ = 0;
 		for (const auto& t : timers) {
-			summ+=t.GetElapsed();
-			if(t.cnt == 1) {
+			summ += t.GetElapsed();
+			if (t.cnt == 1) {
 				timersFile << t.name << ": " << t.GetElapsed() << endl;
-			} else {
-				timersFile << t.name << ": " << " cnt: "<< t.cnt << " timeTotal: " << t.GetElapsed() << " average: " << t.GetElapsed() / t.cnt << endl;
+			}
+			else {
+				timersFile << t.name << ": " << " cnt: " << t.cnt << " timeTotal: " << t.GetElapsed() << " average: " << t.GetElapsed() / t.cnt << endl;
 			}
 		}
 		timersFile << "total: " << summ << endl;
@@ -638,76 +942,124 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, co
 	timers.push_back(TimeStamp("Бинаризация"));
 
 	Mat thresh;
+	Mat image = imageIn;
 	float scale = 1;
-	if(std::max(image.cols, image.rows) > maxSize) {
-		Mat resized;
+	if (std::max(image.cols, image.rows) > maxSize) {
 		scale = static_cast<float>(maxSize) / static_cast<float>(std::max(image.cols, image.rows));
-		cv::resize(image, resized, {static_cast<int>(static_cast<float>(image.rows) * scale), static_cast<int>(static_cast<float>(image.cols) * scale)}, 0,0, cv::INTER_LINEAR);
-		thresh = adaptiveBinarization(resized);
+		cv::resize(image, image, { static_cast<int>(static_cast<float>(image.rows) * scale), static_cast<int>(static_cast<float>(image.cols) * scale) }, 0, 0, cv::INTER_AREA);
+		thresh = adaptiveBinarization(image);
 	}
 	else {
 		thresh = adaptiveBinarization(image);
 	}
-	(timers.end() - 1)->Stop();
+	timers.back().Stop();
 
 	// Морфологические операции
 	timers.push_back(TimeStamp("Морфологические операции"));
 	Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(15, 15));
 	Mat morph;
 	morphologyEx(thresh, morph, MORPH_CLOSE, kernel);
-	(timers.end() - 1)->Stop();
+	timers.back().Stop();
 
 	// Поиск контура и углов
 	timers.push_back(TimeStamp("Поиск контура и углов"));
-	auto [contour, corners] = findMainContour(morph, params.approxPolyEpsilon);
-	corners = orderPoints(corners);
-	(timers.end() - 1)->Stop();
+	auto [contourInt, oldCorners] = findMainContour(morph, params.approxPolyEpsilon);
 
-	// Корректировка углов до ближайших точек контура
-	timers.push_back(TimeStamp("Корректировка углов до ближайших точек контура"));
-	corners = adjustCornersToContour(contour, corners);
-	corners = adjustCornersToContour(contour, corners);  // Второй проход для уточнения
-	(timers.end() - 1)->Stop();
+	std::vector<cv::Point2f> contour;
+	contour.reserve(contourInt.size());
+	std::transform(
+		contourInt.begin(),
+		contourInt.end(),
+		std::back_inserter(contour),
+		[](const cv::Point& p) { return cv::Point2f(p); }
+	);
 
-	if(scale != 1) {
-		for(auto& c : corners) {
-			c /= scale;
-		}
+	auto newCornerInds = findNewCornersIndices(contour, oldCorners);
+	std::vector<cv::Point2f> corners;
+	corners.reserve(4);
+	for (auto& i : newCornerInds) {
+		corners.push_back(contour[i]);
 	}
+
+	timers.back().Stop();
 
 	Mat debugImg = image.clone();
 	for (size_t i = 0; i < corners.size(); ++i) {
-		circle(debugImg, corners[i], 4, Scalar(0, 0, 255), -1);
-		putText(debugImg, to_string(i), Point(corners[i].x + 10, corners[i].y + 10),
+		auto& c = corners[i];
+		circle(debugImg, c, 4, Scalar(0, 0, 255), -1);
+		putText(debugImg, to_string(i), Point(c.x + 10, c.y + 10),
 				FONT_HERSHEY_SIMPLEX, 0.5, Scalar(255, 0, 0), 1);
 	}
 
+	int sideLength = std::min(image.cols, image.rows);
+	int sidePad = sideLength / 10;
+	std::vector<cv::Point2f> dst = {
+		{float(sidePad), float(sidePad)},
+		{float(sideLength - sidePad), float(sidePad)},
+		{float(sideLength - sidePad), float(sideLength - sidePad)},
+		{float(sidePad), float(sideLength - sidePad)}
+	};
+
+	timers.push_back(TimeStamp("Perspective unwarp"));
+	// corners = orderPoints(corners);
+	auto M = cv::getPerspectiveTransform(corners, dst);
+
+	Mat perspectiveCorrected;
+	cv::warpPerspective(image, perspectiveCorrected, M, { sideLength, sideLength });
+
+	cv::perspectiveTransform(contour, contour, M);
+	for (size_t i = 0; i < 4; i++) {
+		corners[i] = contour[newCornerInds[i]];
+	}
+	timers.back().Stop(); // Perspective unwarp
+
+	timers.push_back(TimeStamp("Resample contour"));
+	auto sideOffsets = resampleContour(newCornerInds, contour);
+	timers.back().Stop();
+
+	Mat remapX(params.outputSize, params.outputSize, CV_32F, Scalar(0));
+	Mat remapY(params.outputSize, params.outputSize, CV_32F, Scalar(0));
+	// createRemapGrid2(remapX, remapY, dst, sideOffsets, sideLength, sidePad, params.outputSize, params.offset);
+
+	timers.push_back(TimeStamp("createRemapGrid2"));
+	createRemapGrid3(remapX, remapY, dst, sideOffsets, sideLength, sidePad, params.outputSize, params.offset);
+	timers.back().Stop();
+	timers.push_back(TimeStamp("remap"));
+	remap(perspectiveCorrected, outResult, remapX, remapY, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
+	timers.back().Stop();
+
 	imwrite((basePath / "originalImage.png").string(), image);
+	imwrite((basePath / "perspectiveCorrected.png").string(), perspectiveCorrected);
 	imwrite((basePath / "morphImage.png").string(), morph);
 	imwrite((basePath / "binaryImage.png").string(), thresh);
 	imwrite((basePath / "debugImage.png").string(), debugImg);
+	imwrite((basePath / "warpedImage.png").string(), outResult);
+	double minVal, maxVal;
+	minMaxLoc(remapX, &minVal, &maxVal);
+	imwrite((basePath / "mapX.png").string(), (remapX - minVal) / (maxVal - minVal) * 255);
+	minMaxLoc(remapY, &minVal, &maxVal);
+	imwrite((basePath / "mapY.png").string(), (remapY - minVal) / (maxVal - minVal) * 255);
 
+	// int unwarpCnt = 0;
+	// auto& unwarpTimer = timers.emplace_back("Выпрямление с учетом кривизны");
+	// auto& testTimer = timers.emplace_back("Проверка выпрямления");
+	// Mat remapX(params.outputSize, params.outputSize, CV_32F, Scalar(0));
+	// Mat remapY(params.outputSize, params.outputSize, CV_32F, Scalar(0));
 
-	int unwarpCnt = 0;
-	auto& unwarpTimer = timers.emplace_back("Выпрямление с учетом кривизны");
-	auto& testTimer = timers.emplace_back("Проверка выпрямления");
-	Mat remapX(params.outputSize, params.outputSize, CV_32F, Scalar(0));
-	Mat remapY(params.outputSize, params.outputSize, CV_32F, Scalar(0));
-
-	for(const auto& [xOfs, yOfs] : warps) {
-		if(xOfs.rows != warpPointsCout || yOfs.rows != warpPointsCout) {
+	for (const auto& [xOfs, yOfs] : warps) {
+		if (xOfs.rows != warpPointsCout || yOfs.rows != warpPointsCout) {
 			throw invalid_argument("Offset.rows and warpPointsCout must be equal");
 		}
-		unwarpTimer.Start();
-		createGridDataCurved(remapX, remapY, corners, xOfs, yOfs, params.outputSize, params.offset, warpPointsCout);
-		remap(image, outResult, remapX, remapY, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
-		unwarpTimer.Stop();
-		imwrite((basePath / ("warpedImage_"+std::to_string(unwarpCnt)+".png")).string(), outResult);
-		unwarpCnt++;
-		testTimer.Start();
+		// unwarpTimer.Start();
+		// createGridDataCurved(remapX, remapY, corners, xOfs, yOfs, params.outputSize, params.offset, warpPointsCout);
+		// remap(image, outResult, remapX, remapY, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
+		// unwarpTimer.Stop();
+		// imwrite((basePath / ("warpedImage_"+std::to_string(unwarpCnt)+".png")).string(), outResult);
+		// unwarpCnt++;
+		// testTimer.Start();
 		bool success = processResult(outResult);
-		testTimer.Stop();
-		if(success) {
+		// testTimer.Stop();
+		if (success) {
 			printTimers();
 			return true;
 		}
@@ -754,16 +1106,16 @@ void cvUnwarpPreprocess(cv::Mat& outResult, const cv::Mat& image, const UnwarpPa
 }
 
 
-bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult,const UnwarpParams& params, int warpPointsCout) {
+bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult, const UnwarpParams& params, int warpPointsCout) {
 	// Бинаризация
 	int maxSize = 320;
 
 	Mat thresh;
 	float scale = 1;
-	if(std::max(image.cols, image.rows) > maxSize) {
+	if (std::max(image.cols, image.rows) > maxSize) {
 		Mat resized;
 		scale = static_cast<float>(maxSize) / static_cast<float>(std::max(image.cols, image.rows));
-		cv::resize(image, resized, {static_cast<int>(static_cast<float>(image.rows) * scale), static_cast<int>(static_cast<float>(image.cols) * scale)}, 0,0, cv::INTER_LINEAR);
+		cv::resize(image, resized, { static_cast<int>(static_cast<float>(image.rows) * scale), static_cast<int>(static_cast<float>(image.cols) * scale) }, 0, 0, cv::INTER_LINEAR);
 		thresh = adaptiveBinarization(resized);
 	}
 	else {
@@ -783,8 +1135,8 @@ bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, cons
 	corners = adjustCornersToContour(contour, corners);
 	corners = adjustCornersToContour(contour, corners);  // Второй проход для уточнения
 
-	if(scale != 1.0) {
-		for(auto& c : corners) {
+	if (scale != 1.0) {
+		for (auto& c : corners) {
 			c /= scale;
 		}
 	}
@@ -792,13 +1144,13 @@ bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, cons
 	Mat remapX(params.outputSize, params.outputSize, CV_32F, Scalar(0));
 	Mat remapY(params.outputSize, params.outputSize, CV_32F, Scalar(0));
 
-	for(const auto& [xOfs, yOfs] : warps) {
-		if(xOfs.rows != warpPointsCout || yOfs.rows != warpPointsCout) {
+	for (const auto& [xOfs, yOfs] : warps) {
+		if (xOfs.rows != warpPointsCout || yOfs.rows != warpPointsCout) {
 			throw invalid_argument("Offset.rows and warpPointsCout must be equal");
 		}
 		createGridDataCurved(remapX, remapY, corners, xOfs, yOfs, params.outputSize, params.offset, warpPointsCout);
 		remap(image, outResult, remapX, remapY, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
-		if(processResult(outResult)) {
+		if (processResult(outResult)) {
 			return true;
 		}
 	}

@@ -18,7 +18,6 @@
 #include "datamatrix/DMReader.h"
 #include "datamatrix/DMDetector.h"
 #include "Point.h"
-// #include "DebugDrawStuff.h"
 
 #include <climits>
 #include <memory>
@@ -382,9 +381,7 @@ int main(int argc, char *argv[])
 		
 		if(!ProcessImage(image_cv)) {
 			cv::Mat unwarpedImage;
-			for(auto& v : warp_variants) {
-				testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, ProcessImage, debugBase, UnwarpParams(), testPointsCount);
-			}
+			testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, ProcessImage, debugBase, UnwarpParams(), testPointsCount);
 		}
 
 		// cvUnwarpPreprocess(unwarpedImage, image_cv);
