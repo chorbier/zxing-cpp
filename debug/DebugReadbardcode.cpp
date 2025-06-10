@@ -272,33 +272,44 @@ std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, 
 }
 
 
-
 int main(int argc, char *argv[])
 {
 
-
-	int testPointsCount = 20;
-	float scale = 0.1;
-	std::vector<float> vx1[] {
-		{0,0,0,0,0},
-		{0.30000001192092896, 0.09311136603355408, 0.003913822118192911, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-		{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.0025067664682865143, -0.05963696539402008, -0.19214721024036407},
-		{0.0, 0.08199295401573181, 0.1554209440946579, 0.18605205416679382, 0.19519716501235962, 0.18605205416679382, 0.1554209440946579, 0.08199295401573181, 0.0}
-	};
+	UnwarpParams unwarpParams;
+	unwarpParams.outputSize = 160;
+	unwarpParams.offset = 10;
+	// int testPointsCount = 20;
+	float scale = 1.0 / 36.0;
 	// Вертикальный вектор (5x1)
+	std::vector<std::vector<float>> vx1 = {
+		{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+		{0, 0.42005197160798996, 0.7962254169255832, 0.9531493664624343, 1, 0.9531493664624343, 0.7962254169255832, 0.42005197160798996, 0},
+		{-0, -0.42005197160798996, -0.7962254169255832, -0.9531493664624343, -1, -0.9531493664624343, -0.7962254169255832, -0.42005197160798996, -0}
+	};
 	std::vector<cv::Mat> warps;
-	for(auto& toResample : vx1) {
-		auto& target = warps.emplace_back();
-		cv::resize(cv::Mat_<float>(toResample.size(), 1, toResample.data()), target, {1, testPointsCount}, 0, 0, cv::INTER_LINEAR);
-		target *= scale;
+	for(auto& w : vx1) {
+		warps.push_back(cv::Mat_<float>(w.size(), 1, w.data()));
+		auto& warp = warps.back();
+		warp*=scale;
+		resizeWarp(warp, unwarpParams);
+		// cv::resize(warp, warp, {1, UnwarpParams})
 	}
+	// for(auto& toResample : vx1) {
+	// 	auto& target = warps.emplace_back();
+	// 	cv::resize(cv::Mat_<float>(toResample.size(), 1, toResample.data()), target, {1, testPointsCount}, 0, 0, cv::INTER_LINEAR);
+	// 	target *= scale;
+	// }
 
-	uint8_t warp_variants_pairs[][2] {{0,0},{0,1},{1,0},{0,2},{2,0},{0,3},{3,0}};
+	// uint8_t warp_variants_pairs[][2] {{0,0},{0,1},{1,0},{0,2},{2,0},{0,3},{3,0}};
+	// for(const auto& [wx,wy] : warp_variants_pairs) {
+	// 	warp_variants.push_back({warps[wx], warps[wy]});
+	// }
+
 	std::vector<std::pair<cv::Mat, cv::Mat>> warp_variants;
-	for(const auto& [wx,wy] : warp_variants_pairs) {
-		warp_variants.push_back({warps[wx], warps[wy]});
+	warp_variants.reserve(7);
+	for(const auto& [wx,wy] : (uint8_t[][2]){{0,1},{0,2},{1,0},{2,0}}) {
+		warp_variants.emplace_back(warps[wx], warps[wy]);
 	}
-
 
 
 
@@ -381,7 +392,7 @@ int main(int argc, char *argv[])
 		
 		if(!ProcessImage(image_cv)) {
 			cv::Mat unwarpedImage;
-			testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, ProcessImage, debugBase, UnwarpParams(), testPointsCount);
+			testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, ProcessImage, debugBase, unwarpParams);
 		}
 
 		// cvUnwarpPreprocess(unwarpedImage, image_cv);
