@@ -18,6 +18,5 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, 
 #endif
 
 void cvUnwarpPreprocess(cv::Mat& outResult, const cv::Mat& image, const UnwarpParams& params);
-bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult,const UnwarpParams& params, int warpPointsCout);
-
-void resizeWarp(cv::Mat& warp, const UnwarpParams& params);
+bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult, const UnwarpParams& params);
+void resizeWarp(const cv::Mat& warpIn, cv::Mat& warpOut, const UnwarpParams& params);

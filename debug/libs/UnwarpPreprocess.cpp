@@ -549,11 +549,18 @@ std::vector<int> findNewCornersIndices(const std::vector<cv::Point2f>& contour, 
 
 void fitPolynomial(const std::vector<float>& x, const std::vector<float>& y,
 				  std::vector<float>& coeffs, int degree) {
-	cv::Mat X(x.size(), degree + 1, CV_32F);
+
+	int actual_degree = std::min(degree, static_cast<int>(x.size()) - 1);
+
+	if(actual_degree < 3) {
+		int a = 2;
+	}
+
+	cv::Mat X(x.size(), actual_degree + 1, CV_32F);
 	cv::Mat Y(y.size(), 1, CV_32F);
 
 	for (size_t i = 0; i < x.size(); ++i) {
-		for (int j = 0; j <= degree; ++j) {
+		for (int j = 0; j <= actual_degree; ++j) {
 			X.at<float>(i, j) = std::pow(x[i], j);
 		}
 		Y.at<float>(i, 0) = y[i];
@@ -564,7 +571,7 @@ void fitPolynomial(const std::vector<float>& x, const std::vector<float>& y,
 
 	coeffs.resize(degree + 1);
 	for (int i = 0; i <= degree; ++i) {
-		coeffs[i] = C.at<float>(i, 0);
+		coeffs[i] = i <= actual_degree ? C.at<float>(i, 0) : 0.0;
 	}
 }
 
@@ -637,7 +644,7 @@ std::vector<float> resampleContourSide(const cv::Point2f& startPoint, const cv::
 	return smoothedY;
 }
 
-std::vector<std::vector<float>> resampleContour(std::vector<int>& cornerIndices, const std::vector<cv::Point2f>& contour, int targetPoints = 20) {
+std::vector<std::vector<float>> resampleContour(std::vector<int>& cornerIndices, const std::vector<cv::Point2f>& contour, int targetPoints) {
 	// std::vector<int> cornerIndices = findNewCornersIndices(contour, oldCorners);
 
 	std::vector<cv::Point2f> newCorners;
@@ -661,13 +668,6 @@ std::vector<std::vector<float>> resampleContour(std::vector<int>& cornerIndices,
 }
 
 void createRemapGrid2(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& corners, const vector<vector<float>>& sideOffsets, int inputSize, int inputOffset, int outputSize = 160, int offset = 25) {
-	// vector<Point2f> dstCorners = {
-	// 	Point2f(offset, offset),
-	// 	Point2f(outputSize - offset, offset),
-	// 	Point2f(outputSize - offset, outputSize - offset),
-	// 	Point2f(offset, outputSize - offset)
-	// };
-
 	//     # 0---0---1
 	//     # |       |
 	//     # 3       1
@@ -727,12 +727,6 @@ void createRemapGrid2(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& cor
 }
 
 void createRemapGrid3(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& corners, const vector<vector<float>>& sideOffsets, int inputSize, int inputOffset, int outputSize = 160, int offset = 25) {
-	// vector<Point2f> dstCorners = {
-	// 	Point2f(offset, offset),
-	// 	Point2f(outputSize - offset, offset),
-	// 	Point2f(outputSize - offset, outputSize - offset),
-	// 	Point2f(offset, outputSize - offset)
-	// };
 
 	//     # 0---3---3
 	//     # |       |
@@ -762,22 +756,10 @@ void createRemapGrid3(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& cor
 		}
 	}
 
-	// for (int j = 0; j < outputSize; j++) {
-	// 	// float alpha = float(j - offset) * outputValidSizeInv;
-	// 	for (int i = 0; i < outputSize; i++) {
-	// 		int jj = std::clamp<int>(j - offset, 0, validSideSize - 1);
-	// 		// int jinv = validSideSize - jj - 1;
-	// 		float alpha = float(i - offset) / float(validSideSize - 1);
-	// 		outRemapX.at<float>({ i, j }) += -sideL[j] * (1.0 - alpha) + sideR.end()[-j-1] * alpha;
-	// 		// outRemapY.at<float>({ j, i }) += -sideT[jinv] * (1.0 - alpha) + sideB[j] * alpha;
-	// 	}
-	// }
 	for (int j = 0, jinv = validSideSize - 1; j < validSideSize; j++, jinv--) {
-		// float alpha = float(j - offset) * outputValidSizeInv;
 		for (int i = 0; i < outputSize; i++) {
-			// int jj = std::clamp<int>(j - offset, 0, validSideSize);
 			float alpha = float(i - offset) / float(validSideSize - 1);
-			// outRemapX.at<float>({ i, j + offset }) += -sideL[j] * (1.0 - alpha) + sideR[jinv] * alpha;
+			outRemapX.at<float>({ i, j + offset }) += -sideL[j] * (1.0 - alpha) + sideR[jinv] * alpha;
 			outRemapY.at<float>({ j + offset, i }) += -sideT[jinv] * (1.0 - alpha) + sideB[j] * alpha;
 		}
 	}
@@ -785,9 +767,6 @@ void createRemapGrid3(Mat& outRemapX, Mat& outRemapY, const vector<Point2f>& cor
 }
 
 void modifyGridDataOffsets(Mat& outRemapX, Mat& outRemapY, const Mat& xOfs, const Mat& yOfs, int outputSize = 160, int offset = 25) {
-	if (xOfs.rows != (outputSize - offset * 2) || yOfs.rows != (outputSize - offset * 2)) {
-		invalid_argument("xOfs size must be outputSize - offset * 2");
-	}
 
 	//     # 0---3---3
 	//     # |       |
@@ -958,7 +937,14 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, 
 
 	// Морфологические операции
 	timers.push_back(TimeStamp("Морфологические операции"));
-	Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(15, 15));
+
+	int imageMinDim = std::min(image.rows, image.cols);
+	int kernelSize = 15;
+	if(imageMinDim < 200) {
+		kernelSize = std::max(kernelSize * imageMinDim / 200, 5);
+	}
+
+	Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(kernelSize, kernelSize));
 	Mat morph;
 	morphologyEx(thresh, morph, MORPH_CLOSE, kernel);
 	timers.back().Stop();
@@ -1007,7 +993,7 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, 
 	auto M = cv::getPerspectiveTransform(corners, dst);
 
 	Mat perspectiveCorrected;
-	cv::warpPerspective(image, perspectiveCorrected, M, { sideLength, sideLength });
+	cv::warpPerspective(image, perspectiveCorrected, M, { sideLength, sideLength }, INTER_LINEAR, BORDER_REPLICATE);
 
 	cv::perspectiveTransform(contour, contour, M);
 	for (size_t i = 0; i < 4; i++) {
@@ -1058,7 +1044,7 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, 
 
 	//Try without offset
 	timers[remapTimer].Start();
-	remap(perspectiveCorrected, outResult, remapX, remapY, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
+	remap(perspectiveCorrected, outResult, remapX, remapY, INTER_LINEAR, BORDER_REPLICATE, Scalar(255, 255, 255));
 	timers[remapTimer].Stop();
 	timers[testTimer].Start();
 	bool success = processResult(outResult);
@@ -1072,12 +1058,12 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, 
 	size_t warpTimer = timers.size();
 	timers.emplace_back("warp remap offsets");
 
-	cv::Mat remapXWarped = remapX.clone();
-	cv::Mat remapYWarped = remapY.clone();
-
-	size_t cnt = warps.size();
+	cv::Mat remapXWarped;
+	cv::Mat remapYWarped;
 
 	for (const auto& [xOfs, yOfs] : warps) {
+		remapX.copyTo(remapXWarped);
+		remapY.copyTo(remapYWarped);
 		if (xOfs.rows != params.outputSize - params.offset * 2 || yOfs.rows != params.outputSize - params.offset * 2) {
 			throw invalid_argument("Offset.rows and warpPointsCout must be equal");
 		}
@@ -1086,7 +1072,7 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, 
 		timers[warpTimer].Stop();
 
 		timers[remapTimer].Start();
-		remap(perspectiveCorrected, outResult, remapXWarped, remapYWarped, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
+		remap(perspectiveCorrected, outResult, remapXWarped, remapYWarped, INTER_LINEAR, BORDER_REPLICATE, Scalar(255, 255, 255));
 		timers[remapTimer].Stop();
 
 		timers[testTimer].Start();
@@ -1098,10 +1084,6 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, 
 		if (success) {
 			printTimers();
 			return true;
-		}
-		if (--cnt) {
-			remapX.copyTo(remapXWarped);
-			remapY.copyTo(remapYWarped);
 		}
 	}
 
@@ -1146,58 +1128,119 @@ void cvUnwarpPreprocess(cv::Mat& outResult, const cv::Mat& image, const UnwarpPa
 }
 
 
-bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& image, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult, const UnwarpParams& params, int warpPointsCout) {
+bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, const std::vector<std::pair<cv::Mat, cv::Mat>>& warps, std::function<bool(const cv::Mat&)> processResult, const UnwarpParams& params) {
 	// Бинаризация
 	int maxSize = 320;
 
 	Mat thresh;
+	Mat image = imageIn;
 	float scale = 1;
 	if (std::max(image.cols, image.rows) > maxSize) {
-		Mat resized;
 		scale = static_cast<float>(maxSize) / static_cast<float>(std::max(image.cols, image.rows));
-		cv::resize(image, resized, { static_cast<int>(static_cast<float>(image.rows) * scale), static_cast<int>(static_cast<float>(image.cols) * scale) }, 0, 0, cv::INTER_LINEAR);
-		thresh = adaptiveBinarization(resized);
+		cv::resize(image, image, { static_cast<int>(static_cast<float>(image.rows) * scale), static_cast<int>(static_cast<float>(image.cols) * scale) }, 0, 0, cv::INTER_AREA);
 	}
-	else {
-		thresh = adaptiveBinarization(image);
-	}
+	thresh = adaptiveBinarization(image);
+
 
 	// Морфологические операции
-	Mat kernel = getStructuringElement(MORPH_RECT, Size(11, 11));
+	int imageMinDim = std::min(image.rows, image.cols);
+	int kernelSize = 15;
+	if(imageMinDim < 200) {
+		kernelSize = std::max(kernelSize * imageMinDim / 200, 5);
+		if(!(kernelSize & 1)) {
+			kernelSize++;
+		}
+	}
+
+	Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(kernelSize, kernelSize));
 	Mat morph;
 	morphologyEx(thresh, morph, MORPH_CLOSE, kernel);
 
 	// Поиск контура и углов
-	auto [contour, corners] = findMainContour(morph, params.approxPolyEpsilon);
-	corners = orderPoints(corners);
+	auto [contourInt, oldCorners] = findMainContour(morph, params.approxPolyEpsilon);
 
-	// Корректировка углов до ближайших точек контура
-	corners = adjustCornersToContour(contour, corners);
-	corners = adjustCornersToContour(contour, corners);  // Второй проход для уточнения
+	std::vector<cv::Point2f> contour;
+	contour.reserve(contourInt.size());
+	std::transform(
+		contourInt.begin(),
+		contourInt.end(),
+		std::back_inserter(contour),
+		[](const cv::Point& p) { return cv::Point2f(p); }
+	);
 
-	if (scale != 1.0) {
-		for (auto& c : corners) {
-			c /= scale;
-		}
+	auto newCornerInds = findNewCornersIndices(contour, oldCorners);
+	std::vector<cv::Point2f> corners;
+	corners.reserve(4);
+	for (auto& i : newCornerInds) {
+		corners.push_back(contour[i]);
 	}
+
+	int sideLength = std::min(image.cols, image.rows);
+	int sidePad = sideLength / 10;
+	std::vector<cv::Point2f> dst = {
+		{float(sidePad), float(sidePad)},
+		{float(sidePad), float(sideLength - sidePad)},
+		{float(sideLength - sidePad), float(sideLength - sidePad)},
+		{float(sideLength - sidePad), float(sidePad)}
+	};
+
+	auto M = cv::getPerspectiveTransform(corners, dst);
+
+	Mat perspectiveCorrected;
+	cv::warpPerspective(image, perspectiveCorrected, M, { sideLength, sideLength }, INTER_LINEAR, BORDER_REPLICATE);
+
+	cv::perspectiveTransform(contour, contour, M);
+	for (size_t i = 0; i < 4; i++) {
+		corners[i] = contour[newCornerInds[i]];
+	}
+
+	auto sideOffsets = resampleContour(newCornerInds, contour, params.outputSize - params.offset * 2);
 
 	Mat remapX(params.outputSize, params.outputSize, CV_32F, Scalar(0));
 	Mat remapY(params.outputSize, params.outputSize, CV_32F, Scalar(0));
 
+	createRemapGrid3(remapX, remapY, dst, sideOffsets, sideLength, sidePad, params.outputSize, params.offset);
+
+
+	//Try without offset
+	remap(perspectiveCorrected, outResult, remapX, remapY, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
+	bool success = processResult(outResult);
+	if (success) {
+		return true;
+	}
+
+	cv::Mat remapXWarped;
+	cv::Mat remapYWarped;
+	cv::Mat xOfsResized;
+	cv::Mat yOfsResized;
+
 	for (const auto& [xOfs, yOfs] : warps) {
-		if (xOfs.rows != warpPointsCout || yOfs.rows != warpPointsCout) {
-			throw invalid_argument("Offset.rows and warpPointsCout must be equal");
+		remapX.copyTo(remapXWarped);
+		remapY.copyTo(remapYWarped);
+
+		if(xOfs.rows != params.outputSize - params.offset * 2 || yOfs.rows != params.outputSize - params.offset * 2) {
+			resizeWarp(xOfs, xOfsResized, params);
+			resizeWarp(yOfs, yOfsResized, params);
+			modifyGridDataOffsets(remapXWarped, remapYWarped, xOfsResized, yOfsResized, params.outputSize, params.offset);
+		} else {
+			modifyGridDataOffsets(remapXWarped, remapYWarped, xOfs, yOfs, params.outputSize, params.offset);
 		}
-		createGridDataCurved(remapX, remapY, corners, xOfs, yOfs, params.outputSize, params.offset, warpPointsCout);
-		remap(image, outResult, remapX, remapY, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
-		if (processResult(outResult)) {
+
+			// throw invalid_argument("Offset.rows and warpPointsCout must be equal");
+
+		remap(perspectiveCorrected, outResult, remapXWarped, remapYWarped, INTER_LINEAR, BORDER_CONSTANT, Scalar(255, 255, 255));
+
+		bool success = processResult(outResult);
+
+		if (success) {
 			return true;
 		}
 	}
 	return false;
+
 }
 
-void resizeWarp(cv::Mat& warp, const UnwarpParams& params)
+void resizeWarp(const cv::Mat& warpIn, cv::Mat& warpOut, const UnwarpParams& params)
 {
-	cv::resize(warp, warp, { 1,params.outputSize - params.offset * 2 }, 0, 0, cv::INTER_LINEAR_EXACT);
+	cv::resize(warpIn, warpOut, { 1,params.outputSize - params.offset * 2 });
 }
