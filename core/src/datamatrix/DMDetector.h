@@ -19,6 +19,8 @@ namespace ZXing {
 class BitMatrix;
 class DetectorResult;
 
+static bool TestDetectOld(const BitMatrix& image);
+
 namespace DataMatrix {
 
 #ifdef __cpp_impl_coroutine

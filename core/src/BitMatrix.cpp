@@ -17,56 +17,38 @@ namespace ZXing {
 void
 BitMatrix::setRegion(int left, int top, int width, int height)
 {
-	if (top < 0 || left < 0) {
-		throw std::invalid_argument("BitMatrix::setRegion(): Left and top must be nonnegative");
-	}
-	if (height < 1 || width < 1) {
-		throw std::invalid_argument("BitMatrix::setRegion(): Height and width must be at least 1");
-	}
-	int right = left + width;
-	int bottom = top + height;
-	if (bottom > _height || right > _width) {
-		throw std::invalid_argument("BitMatrix::setRegion(): The region must fit inside the matrix");
-	}
-	for (int y = top; y < bottom; y++) {
-		auto offset = y * _width;
-		for (int x = left; x < right; x++) {
-			_bits[offset + x] = SET_V;
-		}
-	}
+    if (top < 0 || left < 0) {
+        throw std::invalid_argument("BitMatrix::setRegion(): Left and top must be nonnegative");
+    }
+    if (height < 1 || width < 1) {
+        throw std::invalid_argument("BitMatrix::setRegion(): Height and width must be at least 1");
+    }
+    
+    cv::Rect roi(left, top, width, height);
+    if (roi.x + roi.width > _width || roi.y + roi.height > _height) {
+        throw std::invalid_argument("BitMatrix::setRegion(): The region must fit inside the matrix");
+    }
+    
+	asMat().setTo(cv::Scalar(SET_V));
 }
 
-void
-BitMatrix::rotate90()
-{
-	BitMatrix result(height(), width());
-	for (int x = 0; x < width(); ++x) {
-		for (int y = 0; y < height(); ++y) {
-			if (get(x, y)) {
-				result.set(y, width() - x - 1);
-			}
-		}
-	}
-	*this = std::move(result);
+void BitMatrix::rotate90() {
+	auto m = asMat();
+	cv::rotate(m, m, cv::ROTATE_90_CLOCKWISE);
 }
 
 void
 BitMatrix::rotate180()
 {
-	std::reverse(_bits.begin(), _bits.end());
+	auto m = asMat();
+	cv::rotate(m, m, cv::ROTATE_180);
 }
 
 void
 BitMatrix::mirror()
 {
-	for (int x = 0; x < _width; x++) {
-		for (int y = x + 1; y < _height; y++) {
-			if (get(x, y) != get(y, x)) {
-				flip(y, x);
-				flip(x, y);
-			}
-		}
-	}
+	auto m = asMat();
+	cv::flip(m, m, 1);
 }
 
 bool
@@ -93,6 +75,20 @@ BitMatrix::findBoundingBox(int &left, int& top, int& width, int& height, int min
 	height = bottom - top + 1;
 	return width >= minSize && height >= minSize;
 }
+
+bool BitMatrix::findBoundingBox(int &left, int& top, int& width, int& height, int minSize)
+{
+    cv::Rect bbox = cv::boundingRect(asMat());
+    if (bbox.width < minSize || bbox.height < minSize)
+        return false;
+    
+    left = bbox.x;
+    top = bbox.y;
+    width = bbox.width;
+    height = bbox.height;
+    return true;
+}
+
 
 static auto isSet = [](auto v) { return bool(v); };
 
@@ -129,32 +125,65 @@ void GetPatternRow(const BitMatrix& matrix, int r, std::vector<uint16_t>& pr, bo
 		GetPatternRow(matrix.row(r), pr);
 }
 
+// BitMatrix Inflate(BitMatrix&& input, int width, int height, int quietZone)
+// {
+// 	const int codeWidth = input.width();
+// 	const int codeHeight = input.height();
+// 	const int outputWidth = std::max(width, codeWidth + 2 * quietZone);
+// 	const int outputHeight = std::max(height, codeHeight + 2 * quietZone);
+
+// 	if (input.width() == outputWidth && input.height() == outputHeight)
+// 		return std::move(input);
+
+// 	const int scale = std::min((outputWidth - 2*quietZone) / codeWidth, (outputHeight - 2*quietZone) / codeHeight);
+// 	// Padding includes both the quiet zone and the extra white pixels to
+// 	// accommodate the requested dimensions.
+// 	const int leftPadding = (outputWidth - (codeWidth * scale)) / 2;
+// 	const int topPadding = (outputHeight - (codeHeight * scale)) / 2;
+
+// 	BitMatrix result(outputWidth, outputHeight);
+
+// 	for (int inputY = 0, outputY = topPadding; inputY < input.height(); ++inputY, outputY += scale) {
+// 		for (int inputX = 0, outputX = leftPadding; inputX < input.width(); ++inputX, outputX += scale) {
+// 			if (input.get(inputX, inputY))
+// 				result.setRegion(outputX, outputY, scale, scale);
+// 		}
+// 	}
+
+// 	return result;
+// }
+
 BitMatrix Inflate(BitMatrix&& input, int width, int height, int quietZone)
 {
-	const int codeWidth = input.width();
-	const int codeHeight = input.height();
-	const int outputWidth = std::max(width, codeWidth + 2 * quietZone);
-	const int outputHeight = std::max(height, codeHeight + 2 * quietZone);
+    const int codeWidth = input.width();
+    const int codeHeight = input.height();
+    const int outputWidth = std::max(width, codeWidth + 2 * quietZone);
+    const int outputHeight = std::max(height, codeHeight + 2 * quietZone);
 
 	if (input.width() == outputWidth && input.height() == outputHeight)
-		return std::move(input);
+        return std::move(input);
 
-	const int scale = std::min((outputWidth - 2*quietZone) / codeWidth, (outputHeight - 2*quietZone) / codeHeight);
-	// Padding includes both the quiet zone and the extra white pixels to
-	// accommodate the requested dimensions.
-	const int leftPadding = (outputWidth - (codeWidth * scale)) / 2;
-	const int topPadding = (outputHeight - (codeHeight * scale)) / 2;
+    const int scale = std::min(
+        (outputWidth - 2*quietZone) / codeWidth,
+        (outputHeight - 2*quietZone) / codeHeight
+    );
+    const int leftPadding = (outputWidth - (codeWidth * scale)) / 2;
+    const int topPadding = (outputHeight - (codeHeight * scale)) / 2;
 
-	BitMatrix result(outputWidth, outputHeight);
+    BitMatrix result(outputWidth, outputHeight);
 
-	for (int inputY = 0, outputY = topPadding; inputY < input.height(); ++inputY, outputY += scale) {
-		for (int inputX = 0, outputX = leftPadding; inputX < input.width(); ++inputX, outputX += scale) {
-			if (input.get(inputX, inputY))
-				result.setRegion(outputX, outputY, scale, scale);
-		}
-	}
+    // Масштабируем исходное изображение
+    if (scale > 1) {
+	    cv::Mat scaled;
+        cv::resize(input.asMat(), scaled, 
+                  cv::Size(codeWidth * scale, codeHeight * scale),
+                  0, 0, cv::INTER_NEAREST);
+		scaled.copyTo(result.asMat()(cv::Rect(leftPadding, topPadding, scaled.cols, scaled.rows)));
+    } else {
+        input.asMat().copyTo(result.asMat()(cv::Rect(leftPadding, topPadding, input.width(), input.height())));
+    }
 
-	return result;
+    return result;
 }
 
 BitMatrix Deflate(const BitMatrix& input, int width, int height, float top, float left, float subSampling)

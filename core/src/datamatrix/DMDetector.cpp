@@ -37,6 +37,8 @@
 #include <utility>
 #include <vector>
 #include <iostream>
+#include "opencv2/opencv.hpp"
+#include <opencv2/core/hal/intrin.hpp>
 
 #undef min
 #undef max
@@ -429,6 +431,112 @@ namespace ZXing::DataMatrix {
         p1 = pointB;
         p2 = pointC;
     }
+
+	static bool TestDetectOld(const BitMatrix& image)
+	{
+		ResultPoint pointA, pointB, pointC, pointD;
+        if (!DetectWhiteRect(image, pointA, pointB, pointC, pointD))
+            return false;
+
+        // Point A and D are across the diagonal from one another,
+        // as are B and C. Figure out which are the solid black lines
+        // by counting transitions
+        std::array transitions = {
+                TransitionsBetween(image, pointA, pointB),
+                TransitionsBetween(image, pointA, pointC),
+                TransitionsBetween(image, pointB, pointD),
+                TransitionsBetween(image, pointC, pointD),
+        };
+        std::sort(transitions.begin(), transitions.end(),
+                  [](const auto& a, const auto& b) { return a.transitions < b.transitions; });
+
+        // Sort by number of transitions. First two will be the two solid sides; last two
+        // will be the two alternating black/white sides
+        const auto& lSideOne = transitions[0];
+        const auto& lSideTwo = transitions[1];
+
+        // We accept at most 4 transisions inside the L pattern (i.e. 2 corruptions) to reduce false positive FormatErrors
+        if (lSideTwo.transitions > 8)
+            return false;
+
+        // Figure out which point is their intersection by tallying up the number of times we see the
+        // endpoints in the four endpoints. One will show up twice.
+        std::map<const ResultPoint*, int> pointCount;
+        pointCount[lSideOne.from] += 1;
+        pointCount[lSideOne.to] += 1;
+        pointCount[lSideTwo.from] += 1;
+        pointCount[lSideTwo.to] += 1;
+
+        const ResultPoint* bottomRight = nullptr;
+        const ResultPoint* bottomLeft = nullptr;
+        const ResultPoint* topLeft = nullptr;
+        for (const auto& [point, count] : pointCount) {
+            if (count == 2) {
+                bottomLeft = point; // this is definitely the bottom left, then -- end of two L sides
+            }
+            else {
+                // Otherwise it's either top left or bottom right -- just assign the two arbitrarily now
+                if (bottomRight == nullptr) {
+                    bottomRight = point;
+                }
+                else {
+                    topLeft = point;
+                }
+            }
+        }
+
+        if (bottomRight == nullptr || bottomLeft == nullptr || topLeft == nullptr)
+            return false;
+
+        // Bottom left is correct but top left and bottom right might be switched
+        // Use the dot product trick to sort them out
+        OrderByBestPatterns(bottomRight, bottomLeft, topLeft);
+
+        // Which point didn't we find in relation to the "L" sides? that's the top right corner
+        const ResultPoint* topRight;
+        if (pointCount.find(&pointA) == pointCount.end()) {
+            topRight = &pointA;
+        }
+        else if (pointCount.find(&pointB) == pointCount.end()) {
+            topRight = &pointB;
+        }
+        else if (pointCount.find(&pointC) == pointCount.end()) {
+            topRight = &pointC;
+        }
+        else {
+            topRight = &pointD;
+        }
+
+        // Next determine the dimension by tracing along the top or right side and counting black/white
+        // transitions. Since we start inside a black module, we should see a number of transitions
+        // equal to 1 less than the code dimension. Well, actually 2 less, because we are going to
+        // end on a black module:
+
+        // The top right point is actually the corner of a module, which is one of the two black modules
+        // adjacent to the white module at the top right. Tracing to that corner from either the top left
+        // or bottom right should work here.
+
+        int dimensionTop = TransitionsBetween(image, *topLeft, *topRight).transitions;
+        int dimensionRight = TransitionsBetween(image, *bottomRight, *topRight).transitions;
+
+
+        if ((dimensionTop & 0x01) == 1) {
+            // it can't be odd, so, round... up?
+            dimensionTop++;
+        }
+        dimensionTop += 2;
+
+        if ((dimensionRight & 0x01) == 1) {
+            // it can't be odd, so, round... up?
+            dimensionRight++;
+        }
+        dimensionRight += 2;
+
+        if (dimensionTop < 10 || dimensionTop > 144 || dimensionRight < 8 || dimensionRight > 144)
+            return false;
+		
+		return true;
+	}
 
     static DetectorResult DetectOld(const BitMatrix& image)
     {
@@ -1361,76 +1469,148 @@ namespace ZXing::DataMatrix {
     }
 
 
-
     void correctBottle(const BitMatrix& img, BitMatrix& outImg, bool horizontal, bool inverse) {
 
         outImg = img.copy();
 
-        int width, height;
-        bool point;
-        int newx, newy;
-        int center, dy;
         float factor = 15;
 
-        width = img.width();
-        height = img.height();
+        int width = img.width();
+        int height = img.height();
 
 
         if (horizontal) {
 
-            center = (int)(height / 2.0);
+            int center = (int)(height / 2.0);
             factor = (float)center / 7.6;
 
-
-            for (int x = 0; x < width; x++) {
-                for (int y = 0; y < height; y++) {
-                    point = img.get(x, y);
-                    dy = abs(y - center);
-                    if (inverse) {
-                        newx = (x - cos((float)dy / center) * factor) + (factor * 0.75f);
-                    }
-                    else {
-                        newx = (x + cos((float)dy / center) * factor) - (factor * 0.75f);
-                    }
-                    if (newx >= width) newx = width - 1;
-                    if (newx < 0) newx = 0;
-                    newy = y;
-                    outImg.set(newx, newy, point);
-                }
-
+            for (int y = 0; y < height; y++) {
+				int dy = abs(y - center);
+				int offset = (cos((float)dy / center) * factor - (factor * 0.75f));
+				if(inverse) {
+					for (int x = 0; x < width; x++) {
+						outImg.set(std::clamp(x - offset, 0, width - 1), y, img.get(x, y));
+					}
+				} else {
+					for (int x = 0; x < width; x++) {
+						outImg.set(std::clamp(x + offset, 0, width - 1), y, img.get(x, y));
+					}
+				}
             }
         }
         else {
 
 
-            center = (int)(width / 2.0);
+            int center = (int)(width / 2.0);
             factor = (float)center / 7.6;
 
 
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    point = img.get(x, y);
-                    dy = abs(x - center);
-                    if (inverse) {
-                        newy = (y - cos((float)dy / center) * factor) + (factor * 0.75f);
-                    }
-                    else {
-                        newy = (y + cos((float)dy / center) * factor) - (factor * 0.75f);
-                    }
-                    if (newy >= height) newy = height - 1;
-                    if (newy < 0) newy = 0;
-                    newx = x;
-                    outImg.set(newx, newy, point);
-                }
+			for (int x = 0; x < width; x++) {
+				int dy = abs(x - center);
+				int offset = (cos((float)dy / center) * factor - factor * 0.75f);
+				if(inverse) {
+					for (int y = 0; y < height; y++) {
+						outImg.set(x, std::clamp(y - offset, 0, height - 1), img.get(x, y));
+					}
 
+				} else {
+					for (int y = 0; y < height; y++) {
+						outImg.set(x, std::clamp(y + offset, 0, height - 1), img.get(x, y));
+					}
+
+				}
             }
-
-
         }
 
+    }
 
-        // img = img2.copy();
 
+	void createMaps(cv::Mat& mapXY, int outputSize, bool horizontal, bool inverse) {
+		mapXY.create(outputSize, outputSize, CV_32FC2);
+
+		float factor = float(outputSize) / 7.6;
+
+		static cv::Mat offsetMap;
+
+		if(offsetMap.cols != outputSize) {
+			offsetMap = cv::Mat(1, outputSize, CV_32F);
+
+			constexpr const int vec_size = cv::v_float32::nlanes;
+			constexpr size_t simd_alignment = cv::v_float32::nlanes * sizeof(float);
+			float* mapRow = offsetMap.ptr<float>(0);
+			int i = 0;
+			alignas(simd_alignment) float tmp[vec_size];
+			alignas(simd_alignment) float tmp2[vec_size];
+			for(int k = 0; k < vec_size; k++) {
+				tmp2[k] = k;
+			}
+			cv::v_float32 indexAdd = cv::v_load_aligned(tmp2);
+			float indexMul = 2.0 / float(outputSize - 1);
+			
+			for (; i <= outputSize - vec_size; i += vec_size) {
+
+				cv::v_float32 v_val = (cv::v_setall_f32(static_cast<float>(i)) + indexAdd) * cv::v_setall_f32(indexMul);
+				
+				v_val = cv::v_abs(v_val - cv::v_setall_f32(1.0));
+				cv::v_store_aligned(tmp, v_val);
+
+				for(int k = 0; k < vec_size; k++) {
+					tmp[k] = std::cos(tmp[k]);
+				}
+				v_val = cv::v_load_aligned(tmp);
+				v_val = (v_val - cv::v_setall_f32(0.75)) * cv::v_setall_f32(factor);
+				cv::v_store(mapRow + i, v_val);
+	        }
+			for (; i < outputSize; ++i) {
+				mapRow[i] = (std::cos(std::fabs(float(i) * indexMul - 1.0)) - 0.75) * factor;
+			}
+		}
+
+		float* offsetRow = offsetMap.ptr<float>(0);
+		float inverseMul = inverse ? -1.0f : 1.0f;
+
+		cv::parallel_for_(cv::Range(0, outputSize), [&mapXY, inverseMul, offsetRow, &outputSize, horizontal, inverse](const cv::Range& range) {
+			for (int y = range.start; y < range.end; y++) {
+				float* row = mapXY.ptr<float>(y);
+				for(int x = 0; x < outputSize; ++x) {
+					float& dx = row[x * 2];
+					float& dy = row[x * 2 + 1];
+					dx = static_cast<float>(x);
+					dy = static_cast<float>(y);
+					if(horizontal) {
+						dx += offsetRow[y] * inverseMul;
+					} else {
+						dy += offsetRow[x] * inverseMul;
+					}
+				}
+			}
+		});
+	}
+
+	void correctBottleCv(const cv::Mat& img, cv::Mat& outImg, bool horizontal, bool inverse, bool small) {
+
+		// img.copyTo(outImg);
+
+		static std::pair<cv::Mat, cv::Mat> mapsXY[8];
+
+		if(outImg.cols <= 0 || outImg.cols != outImg.rows) {
+			throw std::invalid_argument("Output matrix must be a square");
+		}
+		float outputSize = outImg.rows;
+
+		uint8_t mapMask = (inverse ? 1 : 0) | (horizontal ? 0b10 : 0) | (small ? 0b100 : 0);
+
+		auto& mapXY = mapsXY[mapMask];
+
+		if(mapXY.first.empty()) {
+			cv::Mat floatMap;
+			createMaps(floatMap, outputSize, horizontal, inverse);
+			cv::convertMaps(floatMap, {}, mapXY.first, mapXY.second, CV_16SC2, true);
+			// cv::convertMaps(floatMap, {}, mapXY.first, mapXY.second, CV_32FC2, true);
+			// cv::convertMaps(mapXY, {}, mapXY, {}, CV_16SC2);
+		}
+		
+		cv::remap(img, outImg, mapXY.first, mapXY.second, cv::INTER_NEAREST, 0, 0);
     }
 
 
@@ -1493,6 +1673,39 @@ namespace ZXing::DataMatrix {
             }
         }
     }
+
+	void rotateNew(const BitMatrix& img, BitMatrix& outImg, const PointF& xBasisD) {
+
+		PointT<float> xBasis(xBasisD);
+		PointT<float> yBasis(-xBasis.y, xBasis.x);
+
+		float mul = std::max<float>(std::fabs(xBasis.x + xBasis.y), std::fabs(yBasis.x + yBasis.y));
+
+		PointT<float> inImgSize(img.width() - 1, img.height() - 1);
+		PointT<float> outImgSize(img.width() - 1, img.height() - 1);
+		PointT<float> outImgSizeInv(1.0 / outImgSize.x, 1.0 / outImgSize.y);
+
+		for(int y = 0; y < outImg.width(); y++) {
+			PointT<float> oldY = (float(y) * outImgSizeInv.y - 0.5) * yBasis;
+			// #pragma omp simd safelen(2)
+			// #pragma GCC ivdep
+			for(int x = 0; x < outImg.height(); x++) {
+				auto oldImgF = (float(x) * outImgSizeInv.x - 0.5) * xBasis + oldY;
+				oldImgF = mul * oldImgF;
+				oldImgF.x += 0.5;
+				oldImgF.y += 0.5;
+
+				PointI p(oldImgF * inImgSize);
+				outImg.set(x, y, IsValidPoint(p, img.width(), img.height()) ? img.get(p) : false);
+			}
+		}
+    }
+
+	void rotateCV45(const BitMatrix& img, BitMatrix& outImg) {
+		auto M = cv::getRotationMatrix2D({outImg.width() / 2, outImg.height() / 2}, 45, 0.70710678118);
+		auto outputMat = outImg.asMat();
+		cv::warpAffine(img.asMat(), outputMat, M, outputMat.size(), cv::INTER_NEAREST, cv::BORDER_CONSTANT, BitMatrix::UNSET_V);
+	}
 
 
     void rotate45(BitMatrix& img) {
@@ -1609,8 +1822,12 @@ namespace ZXing::DataMatrix {
                 y1 += signY;
             }
         }
-
     }
+
+    void line3(cv::Mat& mat, int x1, int y1, int x2, int y2, int thickness = 2) {
+		cv::line(mat, {x1,y1},{x2,y2}, BitMatrix::SET_V, thickness, cv::LINE_4);
+    }
+	
 
 
 
@@ -1624,6 +1841,22 @@ namespace ZXing::DataMatrix {
         PointF(cos(M_PI / 3), sin(M_PI / 3))
     };
 
+	BitMatrix CreateSnapped(const BitMatrix& src, int snap = 8) {
+		int w = src.width();
+		int h = src.height();
+		w += w % snap != 0 ? (snap - (w % snap)) : 0;
+		h += h % snap != 0 ? (snap - (h % snap)) : 0;
+		return BitMatrix(w,h);
+	}
+
+	cv::Mat CreateSnappedMat(const BitMatrix& src, int snap = 8) {
+		int w = src.width();
+		int h = src.height();
+		w += w % snap != 0 ? (snap - (w % snap)) : 0;
+		h += h % snap != 0 ? (snap - (h % snap)) : 0;
+		return cv::Mat(h, w, CV_8UC1);
+	}
+
     static DetectorResult DetectCRPT(const BitMatrix& image, DecoderResult& outDecodeResult, ResultedDefect& possibleResultedDefect, Warp* warp = nullptr, bool needToTraceWarp = false, bool correctCorners = false)
     {
 
@@ -1633,14 +1866,28 @@ namespace ZXing::DataMatrix {
         ResultPoint p4(0, 0);
         createBitmapFromBitMatrix(image, p1, p2, p3, p4);*/
 
-        BitMatrix newimage = image.copy();
+
+
+        // BitMatrix newimage = CreateSnapped(image);
+        // BitMatrix newimage();
+		BitMatrix newimage = image.copy();
         ResultPoint pointA, pointB, pointC, pointD;
 
         if (!DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) {
-            for (const auto& rot : rotateEasy) {
-                rotate(image, newimage, rot);
-                if (DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) break;
-            }
+			// drawDebugImage(newimage, "unrotated");
+			rotateCV45(image, newimage);
+			// drawDebugImage(newimage, "rotated");
+			if(!DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) {
+				return {};
+			}
+
+            // for (const auto& rot : rotateEasy) {
+			// 	rotateNew(image, newimage, rot);
+
+			// 	// rotateNew2(image, newimage, rot);
+			// 	// drawDebugImage(newimage, "rotNew");
+            //     if (DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) break;
+            // }
         }
 
 
@@ -1663,29 +1910,58 @@ namespace ZXing::DataMatrix {
         }
 
         //���������� L �� ���� ��������� �� image � ������� DetectNew ��� ������� (��� � ������ L ���� ����������� � ���� �����)
-        BitMatrix img2;
-        for (int i = 0; i < 2; i++) {
+
+		BitMatrix img2;
+
+		for (int i = 0; i < 2; i++) {
             if (i == 0) { n1 = 0; n2 = 1; }
             if (i == 1) { n1 = 0; n2 = 2; }
 
-            img2 = newimage.copy();
-            line2(img2, transitions[n1].from->x(), transitions[n1].from->y(), transitions[n1].to->x(), transitions[n1].to->y());
-            line2(img2, transitions[n2].from->x(), transitions[n2].from->y(), transitions[n2].to->x(), transitions[n2].to->y());
+			newimage.copyTo(img2);
+			// img2 = BitMatrix(newimage.width(), newimage.height());
+            // line2(img2, transitions[n1].from->x(), transitions[n1].from->y(), transitions[n1].to->x(), transitions[n1].to->y());
+            // line2(img2, transitions[n2].from->x(), transitions[n2].from->y(), transitions[n2].to->x(), transitions[n2].to->y());
+
+			// drawDebugImage(img2,"oldLine");
+			newimage.copyTo(img2);
+            img2 = BitMatrix(newimage.width(), newimage.height());
+			auto mat = img2.asMat();
+            line3(mat, transitions[n1].from->x(), transitions[n1].from->y(), transitions[n1].to->x(), transitions[n1].to->y());
+            line3(mat, transitions[n2].from->x(), transitions[n2].from->y(), transitions[n2].to->x(), transitions[n2].to->y());
+			// drawDebugImage(img2,"newLine");
 
             res = DetectNew(img2, true, true, warp, needToTraceWarp, correctCorners);
+
             if (!res.isValid()) continue;
             if (outDecodeResult = Decode(res.bits()); outDecodeResult.isValid()) return res;
-
         } //i
 
 
         //������������ �������������� �������� �������, 4 ��������: �����������/���������+��������
         //� ���� ����� ������������ ���3, L1, ������� � �.�, �������� ����������� �� � ��������
         // BitMatrix img2;
-        for (int i = 0; i < 4; i++) {
+
+		const size_t remapSizeBig = 256;
+		const size_t remapSizeHalfThreshold = 156;
+		size_t remapSize = remapSizeBig;
+		if(std::max(image.width(), image.height()) < remapSizeHalfThreshold) {
+			remapSize /= 2;
+		}
+
+		img2 = BitMatrix(remapSize, remapSize);
+		auto img2Mat = img2.asMat();
+
+		cv::Mat resizedImg;
+		cv::resize(image.asMat(), resizedImg, {remapSize, remapSize}, 0,0, cv::INTER_LINEAR);
+
+		for (int i = 0; i < 4; i++) {
             n1 = 0; n2 = 1;
 
-            correctBottle(newimage, img2, i & 0b10, i & 0b01);
+            // correctBottle(image, img2, i & 0b10, i & 0b01);
+			// drawDebugImage(img2, "oldWarp");
+			// drawDebugImage(image, "orig");
+			correctBottleCv(resizedImg, img2Mat, i & 0b10, i & 0b01, remapSize != remapSizeBig);
+			// drawDebugImage(img2, "warp");
 
             res = DetectNew(img2, true, true, warp, needToTraceWarp, correctCorners);
             if (!res.isValid()) continue;
@@ -1831,7 +2107,7 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
 	ResultPoint whiteRectPoints[4];
 	if (!DetectWhiteRect(image, whiteRectPoints[0], whiteRectPoints[1], whiteRectPoints[2], whiteRectPoints[3]));
 
-	double TEST = FindMaxIslandArea(image, whiteRectPoints[0], whiteRectPoints[1], whiteRectPoints[2], whiteRectPoints[3]);
+	// double TEST = FindMaxIslandArea(image, whiteRectPoints[0], whiteRectPoints[1], whiteRectPoints[2], whiteRectPoints[3]);
 
     // OLD DETECTORS
     bool correctedOffset = false;
@@ -1841,7 +2117,7 @@ DetectorResults DetectSamplegridV1(const BitMatrix& image, bool tryHarder, bool 
     if (outDecoderResult.isValid()) return detRes;
 
     ResultedDefect possibleResultedDefect = ResultedDefect::Default;
-    detRes = DetectCRPT(image.copy(), outDecoderResult, possibleResultedDefect);
+    detRes = DetectCRPT(image, outDecoderResult, possibleResultedDefect);
     SetResultCandidate();
     detRes.setResultedDefect(possibleResultedDefect);
     if (outDecoderResult.isValid()) return detRes;

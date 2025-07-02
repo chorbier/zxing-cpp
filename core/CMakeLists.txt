@@ -460,7 +460,9 @@ endif()
 
 target_compile_features(ZXing PUBLIC cxx_std_17)
 
-target_link_libraries (ZXing PRIVATE Threads::Threads)
+find_package(OpenCV REQUIRED)
+
+target_link_libraries (ZXing PRIVATE Threads::Threads PRIVATE ${OpenCV_LIBS})
 
 add_library(ZXing::ZXing ALIAS ZXing)
 # add the old alias as well, to keep old clients compiling
