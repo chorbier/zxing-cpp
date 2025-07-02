@@ -54,18 +54,39 @@ int DebugFileIndex = 0;
 // 	// cv::imwrite(debugOutputFolder / filename, img);
 // }
 
-void drawDebugImage(const BitMatrix& image, const std::string& postfix) {
+void drawDebugImage(const cv::Mat& image, const std::string& postfix) {
 
-	cv::Mat img(image.width(), image.height(), CV_8UC3);
-	BitMatrixToMat(image, img);
 
-	auto name = std::to_string(DebugFileIndex++);
+	std::string name = std::to_string(DebugFileIndex++);
 	name = std::string(4 - name.length(), '0') + name;
 	if(postfix.length() > 0) {
 		name+="_"+postfix;
 	}
 
-	cv::imwrite(debugOutputFolder / (name + ".jpg"), img);
+	if(image.type() == CV_32FC1 ||  image.type() == CV_16FC1) {
+		double minVal, maxVal;
+		cv::minMaxLoc(image, &minVal, &maxVal);
+		imwrite((debugOutputFolder / (name + ".jpg")).string(), (image - minVal) / (maxVal - minVal) * 255);
+		cv::imwrite((debugOutputFolder / (name + ".jpg")).string(), image);
+		return;
+	}
+	cv::imwrite((debugOutputFolder / (name + ".jpg")).string(), image);
+
+}
+
+void drawDebugImage(const BitMatrix& image, const std::string& postfix) {
+
+	cv::Mat img(image.height(), image.width(), CV_8UC3);
+	BitMatrixToMat(image, img);
+
+	std::string name = std::to_string(DebugFileIndex++);
+	name = std::string(4 - name.length(), '0') + name;
+	if(postfix.length() > 0) {
+		name+="_"+postfix;
+	}
+	// cv::imwrite(debugOutputFolder / (name + ".png"), img);
+	// cv::resize(img, img, {image.width() * 5, image.height() * 5}, 0, 0, cv::INTER_NEAREST);
+	cv::imwrite((debugOutputFolder / (name + ".jpg")).string(), img);
 
 }
 
