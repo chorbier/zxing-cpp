@@ -1,4 +1,5 @@
 #include "ReadBarcode.h"
+#include <gperftools/profiler.h>
 
 #include <iostream>
 #include "ImageView.h"
@@ -162,7 +163,7 @@ inline ImageView ImageViewFromMat(const cv::Mat& image)
 	return {image.data, image.cols, image.rows, fmt};
 }
 
-cv::Mat get_next_possible_image(cv::Mat image, int candidate) {
+cv::Mat get_next_possible_image(cv::Mat image, int candidate, bool& outNeedToBinarize) {
 	cv::Mat image_candidate;
 	cv::Mat image_mixed;
 	cv::Mat blurred;
@@ -171,12 +172,15 @@ cv::Mat get_next_possible_image(cv::Mat image, int candidate) {
 	cv::Mat image_gr;
 	cv::Mat image_gr2;
 
+	outNeedToBinarize = false;
+
 	cv::cvtColor(image, image_gr, cv::COLOR_BGR2GRAY);
 	switch (candidate)
 	{
 	case 0:
 		image_candidate = image.clone();
-
+		outNeedToBinarize = true;
+		break;
 	case 1:
 		cv::adaptiveThreshold(image_gr, image_candidate, 255, 0, 0, 37, 2);
 		image_gr.release();
@@ -225,7 +229,9 @@ cv::Mat get_next_possible_image(cv::Mat image, int candidate) {
 		image_resized.release();
 		blurred.release();
 		cv::cvtColor(image_mixed, image_candidate, cv::COLOR_BGR2GRAY);
+		outNeedToBinarize = true;
 		image_mixed.release();
+
 		break;
 
 
@@ -271,16 +277,14 @@ std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, 
 }
 }
 
-
 int main(int argc, char *argv[])
 {
 
 	UnwarpParams unwarpParams;
 	unwarpParams.outputSize = 160;
-	unwarpParams.offset = 10;
+	unwarpParams.offset = 15;
 	// int testPointsCount = 20;
 	float scale = 1.0 / 36.0;
-	// Вертикальный вектор (5x1)
 	std::vector<std::vector<float>> vx1 = {
 		{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
 		{0, 0.42005197160798996, 0.7962254169255832, 0.9531493664624343, 1, 0.9531493664624343, 0.7962254169255832, 0.42005197160798996, 0},
@@ -288,32 +292,19 @@ int main(int argc, char *argv[])
 	};
 	std::vector<cv::Mat> warps;
 	for(auto& w : vx1) {
-		warps.push_back(cv::Mat_<float>(w.size(), 1, w.data()));
-		auto& warp = warps.back();
-		warp*=scale;
-		resizeWarp(warp, unwarpParams);
-		// cv::resize(warp, warp, {1, UnwarpParams})
+		auto asMat = cv::Mat_<float>(1, w.size(), w.data()).clone();
+		asMat*=scale;
+		resizeWarp(asMat, asMat, unwarpParams);
+		warps.push_back(asMat);
 	}
-	// for(auto& toResample : vx1) {
-	// 	auto& target = warps.emplace_back();
-	// 	cv::resize(cv::Mat_<float>(toResample.size(), 1, toResample.data()), target, {1, testPointsCount}, 0, 0, cv::INTER_LINEAR);
-	// 	target *= scale;
-	// }
-
-	// uint8_t warp_variants_pairs[][2] {{0,0},{0,1},{1,0},{0,2},{2,0},{0,3},{3,0}};
-	// for(const auto& [wx,wy] : warp_variants_pairs) {
-	// 	warp_variants.push_back({warps[wx], warps[wy]});
-	// }
-
 	std::vector<std::pair<cv::Mat, cv::Mat>> warp_variants;
-	warp_variants.reserve(7);
 	for(const auto& [wx,wy] : (uint8_t[][2]){{0,1},{0,2},{1,0},{2,0}}) {
 		warp_variants.emplace_back(warps[wx], warps[wy]);
 	}
 
+	cv::setNumThreads(4);
 
-
-	const auto hints = ZXing::DecodeHints()
+	auto hints = ZXing::DecodeHints()
 						   .setFormats(ZXing::BarcodeFormat::EAN13 | ZXing::BarcodeFormat::EAN8 | ZXing::BarcodeFormat::DataMatrix
 									   | ZXing::BarcodeFormat::QRCode | ZXing::BarcodeFormat::PDF417)
 							.setTryInvert(false)
@@ -328,7 +319,8 @@ int main(int argc, char *argv[])
     fs::path debugOutput("/home/chorbier/dm_debug");
 
     // std::string folder("/home/chorbier/dm-tests/cropped_extracted_frames_printed_codes_videos");
-    std::string folder("/home/chorbier/dm-tests/notebook_codes");
+    // std::string folder("/home/chorbier/dm-tests/notebook_codes");
+    std::string folder("/home/chorbier/dm-tests/cropped_no_padding");
     std::vector<cv::String> filenames;
     cv::glob(folder, filenames, false);
 
@@ -339,6 +331,10 @@ int main(int argc, char *argv[])
 	double imreadTime = 0;
 	auto start = std::chrono::high_resolution_clock::now();
 	int resultedDefect[] = {0,0,0,0,0,0};
+
+	ProfilerStart("output.prof");
+
+	// filenames.resize(1);
 
 	for(auto& fileName : filenames) {
 		
@@ -356,53 +352,47 @@ int main(int argc, char *argv[])
 		// testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warps[0], warps[1], debugBase, UnwarpParams(), testPointsCount);
 		cntTotal++;
 
-		auto ProcessImage = [&](const cv::Mat& image) -> bool {
-
+		auto processImage = [&](const cv::Mat& image) -> bool {
 			for (int candidate = 0; candidate <= 6; candidate++) {
-				cv::Mat image_candidate = ZXing::get_next_possible_image(image_cv, candidate);
-				std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image_cv, image_candidate, hints);
-				bool found = false;
-				bool undetected = true;
+				bool needToBiraize = true;
+				cv::Mat image_candidate = ZXing::get_next_possible_image(image, candidate, needToBiraize);
+				hints.setBinarizer(needToBiraize ? ZXing::Binarizer::LocalAverage : ZXing::Binarizer::LocalAverage);
+				std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image, image_candidate, hints);
 				if (zxing_results_ptr != nullptr && zxing_results_ptr->size() >= 1) {
 					for (const auto& result : *zxing_results_ptr) {
 						if(!result.isValid()) continue;
 						resultedDefect[(int)result.resultedDefect()]++;
 						auto resultString = result.text();
-						// std::cout << "file: \t" << fs::path(fileName).stem().string() << std::endl << "text: \t" << resultString << "\n\n";
 						std::cout << "text: \t" << resultString << "\n\n";
-						undetected = false;
-						// cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_cv);
-						// cv::imwrite(ZXing::debugOutputFolder/ "detected" / path.filename(), image_candidate);
 						cnt++;
-						found = true;
-						break;
+						return true;
 					}
 				}
-
-				if(found) {
-					return true;
-				}
-
 				image_candidate.release();
 			}
 			return false;
 		};
-		
-		// ProcessImage(image_cv);
-		
-		if(!ProcessImage(image_cv)) {
+
+		std::cout << "file: \t" << fs::path(fileName).stem().string() << std::endl;
+
+		if(!processImage(image_cv)) {
 			cv::Mat unwarpedImage;
-			testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, ProcessImage, debugBase, unwarpParams);
+			cvUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, processImage, unwarpParams);
 		}
+		// cv::Mat unwarpedImage;
+		// testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, processImage, debugBase, unwarpParams);
+		// cv::Mat unwarpedImage;
+		// cvUnwarpPreprocessPredefined(unwarpedImage, image_cv, {}, processImage, unwarpParams);
 
 		// cvUnwarpPreprocess(unwarpedImage, image_cv);
 		// std::cout << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - startUnwarp).count() << " testUnwarpTime "<< fs::path(fileName).stem() << std::endl;
 
-		std::unique_ptr<ZXing::Results> zxing_results_ptr;
-		std::cout << "file: \t" << fs::path(fileName).stem().string() << std::endl;
+		// std::unique_ptr<ZXing::Results> zxing_results_ptr;
 
 		// std::cout << "Done " << cntTotal << "(" << cnt << ")" << " of " <<  filenames.size() << "\t\r" << std::flush;
 	}
+
+	ProfilerStop();
 
 	totalTime += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start).count();
 
