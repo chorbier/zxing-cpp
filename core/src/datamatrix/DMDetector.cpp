@@ -1676,26 +1676,28 @@ namespace ZXing::DataMatrix {
 
 	void rotateNew(const BitMatrix& img, BitMatrix& outImg, const PointF& xBasisD) {
 
-		PointT<float> xBasis(xBasisD);
+		auto toFloatP = [](double x, double y) -> PointT<float> {
+			return PointT<float>(static_cast<float>(x), static_cast<float>(y));
+		};
+
+		PointT<float> xBasis(static_cast<float>(xBasisD.x), static_cast<float>(xBasisD.y));
 		PointT<float> yBasis(-xBasis.y, xBasis.x);
 
 		float mul = std::max<float>(std::fabs(xBasis.x + xBasis.y), std::fabs(yBasis.x + yBasis.y));
 
-		PointT<float> inImgSize(img.width() - 1, img.height() - 1);
-		PointT<float> outImgSize(img.width() - 1, img.height() - 1);
-		PointT<float> outImgSizeInv(1.0 / outImgSize.x, 1.0 / outImgSize.y);
+		PointT<float> inImgSize(static_cast<float>(img.width() - 1), static_cast<float>(img.height() - 1));
+		PointT<float> outImgSize(static_cast<float>(outImg.width() - 1), static_cast<float>(outImg.height() - 1));
+		PointT<float> outImgSizeInv = {1.0f / outImgSize.x, 1.0f / outImgSize.y};
 
 		for(int y = 0; y < outImg.width(); y++) {
-			PointT<float> oldY = (float(y) * outImgSizeInv.y - 0.5) * yBasis;
-			// #pragma omp simd safelen(2)
-			// #pragma GCC ivdep
+			PointT<float> oldY = (static_cast<float>(y) * outImgSizeInv.y - 0.5f) * yBasis;
 			for(int x = 0; x < outImg.height(); x++) {
-				auto oldImgF = (float(x) * outImgSizeInv.x - 0.5) * xBasis + oldY;
+				PointT<float> oldImgF = (float(x) * outImgSizeInv.x - 0.5f) * xBasis + oldY;
 				oldImgF = mul * oldImgF;
-				oldImgF.x += 0.5;
-				oldImgF.y += 0.5;
+				oldImgF.x += 0.5f;
+				oldImgF.y += 0.5f;
 
-				PointI p(oldImgF * inImgSize);
+				PointI p = static_cast<PointI>(oldImgF * inImgSize);
 				outImg.set(x, y, IsValidPoint(p, img.width(), img.height()) ? img.get(p) : false);
 			}
 		}
@@ -1923,8 +1925,8 @@ namespace ZXing::DataMatrix {
             // line2(img2, transitions[n2].from->x(), transitions[n2].from->y(), transitions[n2].to->x(), transitions[n2].to->y());
 
 			// drawDebugImage(img2,"oldLine");
-			newimage.copyTo(img2);
-            img2 = BitMatrix(newimage.width(), newimage.height());
+			// newimage.copyTo(img2);
+            // img2 = BitMatrix(newimage.width(), newimage.height());
 			auto mat = img2.asMat();
             line3(mat, transitions[n1].from->x(), transitions[n1].from->y(), transitions[n1].to->x(), transitions[n1].to->y());
             line3(mat, transitions[n2].from->x(), transitions[n2].from->y(), transitions[n2].to->x(), transitions[n2].to->y());
