@@ -36,6 +36,8 @@
 #include <utility>
 #include <vector>
 #include <iostream>
+#include "opencv2/opencv.hpp"
+#include <opencv2/core/hal/intrin.hpp>
 
 #undef min
 #undef max
@@ -1182,6 +1184,93 @@ namespace ZXing::DataMatrix {
 
     }
 
+	void createMaps(cv::Mat& mapXY, int outputSize, bool horizontal, bool inverse) {
+		mapXY.create(outputSize, outputSize, CV_32FC2);
+
+		float factor = float(outputSize) / 7.6;
+
+		static cv::Mat offsetMap;
+
+		if(offsetMap.cols != outputSize) {
+			offsetMap = cv::Mat(1, outputSize, CV_32F);
+
+			constexpr const int vec_size = cv::v_float32::nlanes;
+			constexpr size_t simd_alignment = cv::v_float32::nlanes * sizeof(float);
+			float* mapRow = offsetMap.ptr<float>(0);
+			int i = 0;
+			alignas(simd_alignment) float tmp[vec_size];
+			alignas(simd_alignment) float tmp2[vec_size];
+			for(int k = 0; k < vec_size; k++) {
+				tmp2[k] = k;
+			}
+			cv::v_float32 indexAdd = cv::v_load_aligned(tmp2);
+			float indexMul = 2.0 / float(outputSize - 1);
+			
+			for (; i <= outputSize - vec_size; i += vec_size) {
+
+				cv::v_float32 v_val = (cv::v_setall_f32(static_cast<float>(i)) + indexAdd) * cv::v_setall_f32(indexMul);
+				
+				v_val = cv::v_abs(v_val - cv::v_setall_f32(1.0));
+				cv::v_store_aligned(tmp, v_val);
+
+				for(int k = 0; k < vec_size; k++) {
+					tmp[k] = std::cos(tmp[k]);
+				}
+				v_val = cv::v_load_aligned(tmp);
+				v_val = (v_val - cv::v_setall_f32(0.75)) * cv::v_setall_f32(factor);
+				cv::v_store(mapRow + i, v_val);
+	        }
+			for (; i < outputSize; ++i) {
+				mapRow[i] = (std::cos(std::fabs(float(i) * indexMul - 1.0)) - 0.75) * factor;
+			}
+		}
+
+		float* offsetRow = offsetMap.ptr<float>(0);
+		float inverseMul = inverse ? -1.0f : 1.0f;
+
+		cv::parallel_for_(cv::Range(0, outputSize), [&mapXY, inverseMul, offsetRow, &outputSize, horizontal, inverse](const cv::Range& range) {
+			for (int y = range.start; y < range.end; y++) {
+				float* row = mapXY.ptr<float>(y);
+				for(int x = 0; x < outputSize; ++x) {
+					float& dx = row[x * 2];
+					float& dy = row[x * 2 + 1];
+					dx = static_cast<float>(x);
+					dy = static_cast<float>(y);
+					if(horizontal) {
+						dx += offsetRow[y] * inverseMul;
+					} else {
+						dy += offsetRow[x] * inverseMul;
+					}
+				}
+			}
+		});
+	}
+
+	void correctBottleCv(const cv::Mat& img, cv::Mat& outImg, bool horizontal, bool inverse, bool small) {
+
+		// img.copyTo(outImg);
+
+		static std::pair<cv::Mat, cv::Mat> mapsXY[8];
+
+		if(outImg.cols <= 0 || outImg.cols != outImg.rows) {
+			throw std::invalid_argument("Output matrix must be a square");
+		}
+		float outputSize = outImg.rows;
+
+		uint8_t mapMask = (inverse ? 1 : 0) | (horizontal ? 0b10 : 0) | (small ? 0b100 : 0);
+
+		auto& mapXY = mapsXY[mapMask];
+
+		if(mapXY.first.empty()) {
+			cv::Mat floatMap;
+			createMaps(floatMap, outputSize, horizontal, inverse);
+			cv::convertMaps(floatMap, {}, mapXY.first, mapXY.second, CV_16SC2, true);
+			// cv::convertMaps(floatMap, {}, mapXY.first, mapXY.second, CV_32FC2, true);
+			// cv::convertMaps(mapXY, {}, mapXY, {}, CV_16SC2);
+		}
+		
+		cv::remap(img, outImg, mapXY.first, mapXY.second, cv::INTER_NEAREST, 0, 0);
+    }
 
     void rotate(const BitMatrix& img, BitMatrix& outImg, const PointF& sincos) {
         int  rows, cols,r,c,r1,c1,k,s;
@@ -1243,6 +1332,40 @@ namespace ZXing::DataMatrix {
         }
     }
 
+	void rotateNew(const BitMatrix& img, BitMatrix& outImg, const PointF& xBasisD) {
+
+		auto toFloatP = [](double x, double y) -> PointT<float> {
+			return PointT<float>(static_cast<float>(x), static_cast<float>(y));
+		};
+
+		PointT<float> xBasis(static_cast<float>(xBasisD.x), static_cast<float>(xBasisD.y));
+		PointT<float> yBasis(-xBasis.y, xBasis.x);
+
+		float mul = std::max<float>(std::fabs(xBasis.x + xBasis.y), std::fabs(yBasis.x + yBasis.y));
+
+		PointT<float> inImgSize(static_cast<float>(img.width() - 1), static_cast<float>(img.height() - 1));
+		PointT<float> outImgSize(static_cast<float>(outImg.width() - 1), static_cast<float>(outImg.height() - 1));
+		PointT<float> outImgSizeInv = {1.0f / outImgSize.x, 1.0f / outImgSize.y};
+
+		for(int y = 0; y < outImg.width(); y++) {
+			PointT<float> oldY = (static_cast<float>(y) * outImgSizeInv.y - 0.5f) * yBasis;
+			for(int x = 0; x < outImg.height(); x++) {
+				PointT<float> oldImgF = (float(x) * outImgSizeInv.x - 0.5f) * xBasis + oldY;
+				oldImgF = mul * oldImgF;
+				oldImgF.x += 0.5f;
+				oldImgF.y += 0.5f;
+
+				PointI p = static_cast<PointI>(oldImgF * inImgSize);
+				outImg.set(x, y, IsValidPoint(p, img.width(), img.height()) ? img.get(p) : false);
+			}
+		}
+    }
+
+	void rotateCV45(const BitMatrix& img, BitMatrix& outImg) {
+		auto M = cv::getRotationMatrix2D({float(outImg.width()) * 0.5f, float(outImg.height()) * 0.5f}, 45, 0.70710678118);
+		auto outputMat = outImg.asMat();
+		cv::warpAffine(img.asMat(), outputMat, M, outputMat.size(), cv::INTER_NEAREST, cv::BORDER_CONSTANT, BitMatrix::UNSET_V);
+	}
 
     void rotate45(BitMatrix& img) {
         int  rows, cols,r,c,r1,c1,k,s;
@@ -1361,7 +1484,9 @@ namespace ZXing::DataMatrix {
 
     }
 
-
+    void line3(cv::Mat& mat, int x1, int y1, int x2, int y2, int thickness = 2) {
+		cv::line(mat, {x1,y1},{x2,y2}, BitMatrix::SET_V, thickness, cv::LINE_4);
+    }
 
 std::array rotateEasy = {
     PointF(cos(M_PI / 4), sin(M_PI / 4))
@@ -1375,21 +1500,14 @@ std::array rotateMediun = {
 
     static DetectorResult DetectCRPT(const BitMatrix& image, DecoderResult& outDecodeResult, ResultedDefect& possibleResultedDefect, Warp* warp = nullptr, bool needToTraceWarp = false, bool correctCorners = false)
     {
-
-        /*ResultPoint p1(0, 0);
-        ResultPoint p2(0, 0);
-        ResultPoint p3(0, 0);
-        ResultPoint p4(0, 0);
-        createBitmapFromBitMatrix(image, p1, p2, p3, p4);*/
-
-        BitMatrix newimage = image.copy();
+		BitMatrix newimage = image.copy();
         ResultPoint pointA, pointB, pointC, pointD;
 
-        if(!DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) {
-            for(const auto& rot : rotateEasy) {
-                rotate(image, newimage, rot);
-                if (DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) break;
-            }
+        if (!DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) {
+			rotateCV45(image, newimage);
+			if(!DetectWhiteRect(newimage, pointA, pointB, pointC, pointD)) {
+				return {};
+			}
         }
 
 
@@ -1412,29 +1530,41 @@ std::array rotateMediun = {
         }
 
         //���������� L �� ���� ��������� �� image � ������� DetectNew ��� ������� (��� � ������ L ���� ����������� � ���� �����)
-        BitMatrix img2;
-        for (int i = 0; i < 2; i++) {
+		BitMatrix img2;
+
+		for (int i = 0; i < 2; i++) {
             if (i == 0) { n1 = 0; n2 = 1; }
             if (i == 1) { n1 = 0; n2 = 2; }
 
-            img2 = newimage.copy();
-            line2(img2, transitions[n1].from->x(), transitions[n1].from->y(), transitions[n1].to->x(), transitions[n1].to->y());
-            line2(img2, transitions[n2].from->x(), transitions[n2].from->y(), transitions[n2].to->x(), transitions[n2].to->y());
+			newimage.copyTo(img2);
+			auto mat = img2.asMat();
+            line3(mat, transitions[n1].from->x(), transitions[n1].from->y(), transitions[n1].to->x(), transitions[n1].to->y());
+            line3(mat, transitions[n2].from->x(), transitions[n2].from->y(), transitions[n2].to->x(), transitions[n2].to->y());
 
             res = DetectNew(img2, true, true, warp, needToTraceWarp, correctCorners);
+
             if (!res.isValid()) continue;
             if (outDecodeResult = Decode(res.bits()); outDecodeResult.isValid()) return res;
-
         } //i
 
 
-        //������������ �������������� �������� �������, 4 ��������: �����������/���������+��������
-        //� ���� ����� ������������ ���3, L1, ������� � �.�, �������� ����������� �� � ��������
-        // BitMatrix img2;
-        for (int i = 0; i < 4; i++) {
+		const int remapSizeBig = 256;
+		const int remapSizeHalfThreshold = 156;
+		int remapSize = remapSizeBig;
+		if(std::max(image.width(), image.height()) < remapSizeHalfThreshold) {
+			remapSize /= 2;
+		}
+
+		img2 = BitMatrix(remapSize, remapSize);
+		auto img2Mat = img2.asMat();
+
+		cv::Mat resizedImg;
+		cv::resize(image.asMat(), resizedImg, {remapSize, remapSize}, 0,0, cv::INTER_LINEAR);
+
+		for (int i = 0; i < 4; i++) {
             n1 = 0; n2 = 1;
 
-            correctBottle(newimage, img2, i & 0b10, i & 0b01);
+			correctBottleCv(resizedImg, img2Mat, i & 0b10, i & 0b01, remapSize != remapSizeBig);
 
             res = DetectNew(img2, true, true, warp, needToTraceWarp, correctCorners);
             if (!res.isValid()) continue;

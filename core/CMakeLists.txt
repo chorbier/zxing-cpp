@@ -439,6 +439,14 @@ add_library (ZXing
     ${LIBZUECI_FILES}
 )
 
+#find_package(OpenCV REQUIRED COMPONENTS core imgproc PATHS ${OpenCV_DIR} NO_DEFAULT_PATH)
+
+if (OpenCV_DIR)
+    find_package(OpenCV REQUIRED PATHS ${OpenCV_DIR} NO_DEFAULT_PATH)
+else()
+    find_package(OpenCV)
+endif()
+
 target_include_directories (ZXing
     PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>" "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>"
     INTERFACE "$<INSTALL_INTERFACE:include>"
@@ -460,7 +468,11 @@ endif()
 
 target_compile_features(ZXing PUBLIC cxx_std_17)
 
-target_link_libraries (ZXing PRIVATE Threads::Threads)
+target_link_libraries (ZXing PRIVATE Threads::Threads ${OpenCV_LIBS}
+#    log
+)
+
+#target_link_options (ZXing PRIVATE "LINKER:-rpath-link=${ANDROID_LIB_DIR}")
 
 add_library(ZXing::ZXing ALIAS ZXing)
 # add the old alias as well, to keep old clients compiling

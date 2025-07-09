@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include "opencv2/opencv.hpp"
 
 namespace ZXing {
 
@@ -99,8 +100,10 @@ public:
 
 	void flipAll()
 	{
-		for (auto& i : _bits)
-			i = !i * SET_V;
+		auto m = asMat();
+		cv::bitwise_not(m, m);
+		// for (auto& i : _bits)
+		// 	i = !i * SET_V;
 	}
 
 	/**
@@ -125,6 +128,7 @@ public:
 	* @return True iff this rectangle is at least minWidth x minHeight pixels big
 	*/
 	bool findBoundingBox(int &left, int& top, int& width, int& height, int minSize = 1) const;
+	bool findBoundingBox(int &left, int& top, int& width, int& height, int minSize = 1);
 
 	int width() const { return _width; }
 
@@ -147,6 +151,24 @@ public:
 	bool get(PointF p) const { return get(PointI(p)); }
 	void set(PointI p, bool v = true) { set(p.x, p.y, v); }
 	void set(PointF p, bool v = true) { set(PointI(p), v); }
+
+	cv::Mat asMat() {
+		return cv::Mat_<data_t>(_height, _width, _bits.data() );
+	};
+
+	const cv::Mat asMat() const {
+		return cv::Mat(_height, _width, CV_8UC1, const_cast<data_t*>(_bits.data()));
+	}
+
+	void copyTo(BitMatrix& other) const {
+		other._width = _width;
+		other._height = _height;
+		other._bits = _bits;
+	};
+
+	// cv::Mat&& asMat() {
+	// 	return cv::Mat_<data_t>(_height, _width, _bits.data() );
+	// };
 };
 
 void GetPatternRow(const BitMatrix& matrix, int r, std::vector<uint16_t>& pr, bool transpose);
