@@ -489,15 +489,15 @@ Mat adaptiveBinarization(const Mat& image) {
 	cvtColor(image, gray, COLOR_BGR2GRAY);
 	bilateralFilter(gray, blurred, 6, 75, 75);
 
-	Mat gradX, gradY;
-	Sobel(blurred, gradX, CV_32F, 1, 0, 3);
-	Sobel(blurred, gradY, CV_32F, 0, 1, 3);
+	// Mat gradX, gradY;
+	// Sobel(blurred, gradX, CV_32F, 1, 0, 3);
+	// Sobel(blurred, gradY, CV_32F, 0, 1, 3);
 
-	Mat gradMag;
-	magnitude(gradX, gradY, gradMag);
+	// Mat gradMag;
+	// magnitude(gradX, gradY, gradMag);
 
 	Mat thresh;
-	adaptiveThreshold(blurred, thresh, 70, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY_INV, 21, 12);
+	adaptiveThreshold(blurred, thresh, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY_INV, 21, 12);
 
 	return thresh;
 }
@@ -993,7 +993,7 @@ bool testUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, 
 	auto M = cv::getPerspectiveTransform(corners, dst);
 
 	Mat perspectiveCorrected;
-	cv::warpPerspective(image, perspectiveCorrected, M, { sideLength, sideLength }, INTER_LINEAR, BORDER_REPLICATE);
+	cv::warpPerspective(255 - thresh, perspectiveCorrected, M, { sideLength, sideLength }, INTER_LINEAR, BORDER_REPLICATE);
 
 	cv::perspectiveTransform(contour, contour, M);
 	for (size_t i = 0; i < 4; i++) {
@@ -1141,7 +1141,6 @@ bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, co
 	}
 	thresh = adaptiveBinarization(image);
 
-
 	// Морфологические операции
 	int imageMinDim = std::min(image.rows, image.cols);
 	int kernelSize = 15;
@@ -1185,6 +1184,8 @@ bool cvUnwarpPreprocessPredefined(cv::Mat& outResult, const cv::Mat& imageIn, co
 	};
 
 	auto M = cv::getPerspectiveTransform(corners, dst);
+
+	// Mat binarized = thresh.
 
 	Mat perspectiveCorrected;
 	cv::warpPerspective(image, perspectiveCorrected, M, { sideLength, sideLength }, INTER_LINEAR, BORDER_REPLICATE);

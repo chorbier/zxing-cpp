@@ -247,6 +247,13 @@ std::unique_ptr<Results> try_decode_image_crpt(cv::Mat image_cv, cv::Mat image, 
 	std::unique_ptr<Results> zxing_results = nullptr;
 
 	try {
+		zxing_results = std::make_unique<Results>(ReadBarcodes(ImageViewFromMat(image), hints));
+	} catch (...) {
+		zxing_results = nullptr;
+	}
+	return zxing_results;
+
+	try {
 		zxing_results = std::make_unique<Results>(readbarcodescrpt_samplegridv1(ImageViewFromMat(image), hints, true));
 	} catch (...) {
 		zxing_results = nullptr;
@@ -294,8 +301,9 @@ int main(int argc, char *argv[])
 	for(auto& w : vx1) {
 		auto asMat = cv::Mat_<float>(1, w.size(), w.data()).clone();
 		asMat*=scale;
-		resizeWarp(asMat, asMat, unwarpParams);
-		warps.push_back(asMat);
+		cv::Mat resized;
+		resizeWarp(asMat, resized, unwarpParams);
+		warps.push_back(resized);
 	}
 	std::vector<std::pair<cv::Mat, cv::Mat>> warp_variants;
 	for(const auto& [wx,wy] : (uint8_t[][2]){{0,1},{0,2},{1,0},{2,0}}) {
@@ -308,7 +316,7 @@ int main(int argc, char *argv[])
 						   .setFormats(ZXing::BarcodeFormat::EAN13 | ZXing::BarcodeFormat::EAN8 | ZXing::BarcodeFormat::DataMatrix
 									   | ZXing::BarcodeFormat::QRCode | ZXing::BarcodeFormat::PDF417)
 							.setTryInvert(false)
-						   .setTryRotate(true)
+						   .setTryRotate(false)
 						   .setTryDownscale(true)
 						   .setDownscaleFactor(4)
 						   .setBinarizer(ZXing::Binarizer::LocalAverage)
@@ -316,11 +324,18 @@ int main(int argc, char *argv[])
 						   .setMaxNumberOfSymbols(0xff)
 						   .setEanAddOnSymbol(ZXing::EanAddOnSymbol::Ignore);
 
+	hints.setFormats(ZXing::BarcodeFormat::Codabar | ZXing::BarcodeFormat::Code39 | ZXing::BarcodeFormat::Code93
+                                         | ZXing::BarcodeFormat::Code128 | ZXing::BarcodeFormat::DataBar | ZXing::BarcodeFormat::DataBarExpanded | ZXing::BarcodeFormat::EAN8
+                                         | ZXing::BarcodeFormat::EAN13 | ZXing::BarcodeFormat::ITF | ZXing::BarcodeFormat::UPCA | ZXing::BarcodeFormat::UPCE);
+
+ 	hints.setFormats(ZXing::BarcodeFormat::QRCode);
+
     fs::path debugOutput("/home/chorbier/dm_debug");
 
     // std::string folder("/home/chorbier/dm-tests/cropped_extracted_frames_printed_codes_videos");
     // std::string folder("/home/chorbier/dm-tests/notebook_codes");
-    std::string folder("/home/chorbier/dm-tests/cropped_no_padding");
+    std::string folder("/home/chorbier/dm-tests/qr");
+    // std::string folder("/home/chorbier/dm-tests/cropped_no_padding");
     std::vector<cv::String> filenames;
     cv::glob(folder, filenames, false);
 
@@ -373,11 +388,28 @@ int main(int argc, char *argv[])
 			return false;
 		};
 
+		auto processWarped = [&](const cv::Mat& image_candidate) -> bool {
+			hints.setBinarizer(ZXing::Binarizer::FixedThreshold);
+			std::unique_ptr<ZXing::Results> zxing_results_ptr = ZXing::try_decode_image_crpt(image_candidate, image_candidate, hints);
+			if (zxing_results_ptr != nullptr && zxing_results_ptr->size() >= 1) {
+				for (const auto& result : *zxing_results_ptr) {
+					if(!result.isValid()) continue;
+					resultedDefect[(int)result.resultedDefect()]++;
+					auto resultString = result.text();
+					std::cout << "text: \t" << resultString << "\n\n";
+					cnt++;
+					return true;
+				}
+			}
+			return false;
+		};
+
 		std::cout << "file: \t" << fs::path(fileName).stem().string() << std::endl;
 
 		if(!processImage(image_cv)) {
 			cv::Mat unwarpedImage;
-			cvUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, processImage, unwarpParams);
+			// cvUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, processImage, unwarpParams);
+			testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, processWarped, debugBase, unwarpParams);
 		}
 		// cv::Mat unwarpedImage;
 		// testUnwarpPreprocessPredefined(unwarpedImage, image_cv, warp_variants, processImage, debugBase, unwarpParams);
