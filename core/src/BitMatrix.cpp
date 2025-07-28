@@ -29,7 +29,7 @@ BitMatrix::setRegion(int left, int top, int width, int height)
         throw std::invalid_argument("BitMatrix::setRegion(): The region must fit inside the matrix");
     }
     
-	asMat().setTo(cv::Scalar(SET_V));
+	asMat()(roi).setTo(cv::Scalar(SET_V));
 }
 
 void BitMatrix::rotate90() {
