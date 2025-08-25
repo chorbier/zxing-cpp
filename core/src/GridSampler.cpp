@@ -215,26 +215,26 @@ PointF Interp(const std::vector<PointF>& ar, float alpha)
 void Warp::Resample(int sizeX, int sizeY)
 {
 	if(sizeX == xOffsets.size() && sizeY == yOffsets.size()) return;
-	std::vector<PointF> res;
+	std::vector<PointF> buf;
 	if(sizeX != yOffsets.size()) {
-		res.resize(sizeX);
-		float newSizeXF = sizeX - 1;
-		for(int i = 0; i < sizeX; i++) {
-			float alpha = float(i) / newSizeXF;
-			res[i] = Interp(xOffsets, alpha);
-		}
+		buf = xOffsets;
 		xOffsets.resize(sizeX);
-		std::copy(res.data(), &res[sizeX - 1], xOffsets.data());
+
+		float newSizeXFInv = 1.0f / float(sizeX - 1);
+		for(int i = 0; i < sizeX; i++) {
+			float alpha = float(i) * newSizeXFInv;
+			xOffsets[i] = Interp(buf, alpha);
+		}
 	}
 	if(sizeY != yOffsets.size()) {
-		res.resize(sizeY);
-		float newSizeYF = sizeY - 1;
-		for(int i = 0; i < sizeY; i++) {
-			float alpha = float(i) / newSizeYF;
-			res[i] = Interp(yOffsets, alpha);
-		}
+		buf = yOffsets;
 		yOffsets.resize(sizeY);
-		std::copy(res.data(), &res[sizeY - 1], yOffsets.data());
+
+		float newSizeYFInv = 1.0f / float(sizeY - 1);
+		for(int i = 0; i < sizeY; i++) {
+			float alpha = float(i) * newSizeYFInv;
+			yOffsets[i] = Interp(buf, alpha);
+		}
 	}
 }
 

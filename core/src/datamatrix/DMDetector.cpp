@@ -192,6 +192,56 @@ namespace ZXing::DataMatrix {
 		}
 	}
 
+	int testCenterLineOffset(const BitMatrix& img) {
+		if(img.width() < 32 || img.width() > 52) return 0;
+		float lineInfo[4];
+		float lineInfoCnt[4];
+		for(int i = 4; i--;){
+			lineInfo[i] = 0.0f;
+			lineInfoCnt[i] = 1.0f;
+		}
+		int startY = img.height() / 2 - 2;
+
+		for(int yo = 0; yo < 4; yo++) {
+			int y = startY + yo;
+			int cnt = 1;
+			uint8_t curState = img.get(0, y);
+			for(int x = 1; x < img.width(); x++) {
+				auto v = img.get(x, y);
+				if(curState != v) {
+					lineInfo[yo] += cnt;
+					lineInfoCnt[yo]++;
+					cnt = 0;
+					curState = v;
+				}
+				cnt++;
+			}
+			lineInfo[yo] /= lineInfoCnt[yo];
+		}
+		int indexSync = std::min_element(lineInfoCnt, lineInfoCnt + 4) - lineInfoCnt;
+		int indexLine = std::max_element(lineInfoCnt, lineInfoCnt + 4) - lineInfoCnt;
+		if(indexSync == 1 && indexLine == 2) {
+			return 0;
+		}
+		if(indexSync == 1 && indexLine == 0) {
+			return -1;
+		}
+		if(indexSync == 2 && indexLine == 3) {
+			return 1;
+		}
+		return 0;
+	}
+
+
+
+	std::pair<int8_t, int8_t> testCenterLineBiOffset(const BitMatrix& img) {
+		// drawDebugImage(img, "offsets");
+		int offsetY = testCenterLineOffset(img);
+		auto imgRotated = img.copy();
+		imgRotated.rotate90();
+		int offsetX = testCenterLineOffset(imgRotated);
+		return {offsetX, offsetY};
+	}
 
 	double FindMaxIslandArea(const BitMatrix& image, const PointF& p0, const PointF& p1, const PointF& p2, const PointF& p3) {
 		BitMatrix targetImage(image.width(), image.height());
@@ -372,6 +422,30 @@ namespace ZXing::DataMatrix {
         return SampleGrid(image, width, height,
                           { Rectangle(width, height, 0.5), {topLeft, topRight, bottomRight, bottomLeft} });
     }
+
+    static DetectorResult SampleGridTestOffseted(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix)
+    {
+        auto res = SampleGrid(image, width, height, mod2Pix);
+		auto [xMul, yMul] = testCenterLineBiOffset(res.bits());
+		if(xMul != 0 || yMul != 0) {
+			auto oo = mod2Pix({0, 0});
+			PointF xo = float(xMul) * (mod2Pix({width, 0}) - oo) / float(width);
+			PointF yo = float(yMul) * (mod2Pix({0, height}) - oo) / float(height);
+			Warp w({{}, xo, {}}, {{}, yo, {}});
+			w.Resample(width, height);
+			res = SampleGridWarped(image, width, height, w, mod2Pix);
+			auto offsets = testCenterLineBiOffset(res.bits());
+			return res;
+		}
+		return res;
+    }
+
+	static DetectorResult SampleGridTestOffseted(const BitMatrix& image, const ResultPoint& topLeft, const ResultPoint& bottomLeft,
+									const ResultPoint& bottomRight, const ResultPoint& topRight, int width, int height)
+	{
+		PerspectiveTransform mod2pix = { Rectangle(width, height, 0.5), {topLeft, topRight, bottomRight, bottomLeft} };
+		return SampleGridTestOffseted(image, width, height, mod2pix);
+	}
 
     static DetectorResult SampleGridWarped(const BitMatrix& image, const ResultPoint& topLeft, const ResultPoint& bottomLeft,
                                            const ResultPoint& bottomRight, const ResultPoint& topRight, int width, int height, const Warp& warp)
@@ -931,7 +1005,9 @@ namespace ZXing::DataMatrix {
             //     dimensionCorrected++;
             // }
             correctedOffset = false;
-            res = SampleGrid(image, *topLeft, *bottomLeft, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
+			res = SampleGridTestOffseted(image, *topLeft, *bottomLeft, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
+            // res = SampleGrid(image, *topLeft, *bottomLeft, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
+			// auto testValue = testCenterLineBiOffset(res.bits());
             outDecoderResult = Decode(res.bits());
             return res;
         }
@@ -1393,11 +1469,12 @@ namespace ZXing::DataMatrix {
                 }
             }
             else {
-                res = SampleGrid(*startTracer.img, dimT, dimR, PerspectiveTransform(Rectangle(dimT, dimR, 0), sourcePoints));
+				// SampleGridTestOffseted()
+                // res = SampleGrid(*startTracer.img, dimT, dimR, PerspectiveTransform(Rectangle(dimT, dimR, 0), sourcePoints));
+				res = SampleGridTestOffseted(*startTracer.img, dimT, dimR, PerspectiveTransform(Rectangle(dimT, dimR, 0), sourcePoints));
             }
 
             CHECK(res.isValid());
-
             return res;
         }
 
@@ -1528,7 +1605,7 @@ namespace ZXing::DataMatrix {
 	void createMaps(cv::Mat& mapXY, int outputSize, bool horizontal, bool inverse) {
 		mapXY.create(outputSize, outputSize, CV_32FC2);
 
-		float factor = float(outputSize) / 7.6;
+		float factor = float(outputSize) / 7.6 * 0.5;
 
 		static cv::Mat offsetMap;
 
@@ -1610,7 +1687,7 @@ namespace ZXing::DataMatrix {
 			// cv::convertMaps(mapXY, {}, mapXY, {}, CV_16SC2);
 		}
 		
-		cv::remap(img, outImg, mapXY.first, mapXY.second, cv::INTER_NEAREST, 0, 0);
+		cv::remap(img, outImg, mapXY.first, mapXY.second, cv::InterpolationFlags::INTER_NEAREST, 0, 0);
     }
 
 
@@ -1955,15 +2032,17 @@ namespace ZXing::DataMatrix {
 
 		cv::Mat resizedImg;
 		cv::resize(image.asMat(), resizedImg, {remapSize, remapSize}, 0,0, cv::INTER_LINEAR);
+		cv::threshold(resizedImg, resizedImg, 127, 255, cv::THRESH_BINARY);
 
 		for (int i = 0; i < 4; i++) {
             n1 = 0; n2 = 1;
-
-            // correctBottle(image, img2, i & 0b10, i & 0b01);
-			// drawDebugImage(img2, "oldWarp");
+			// drawDebugImage(image, "original");
+			// auto TestImg2 = image.copy();
+            // correctBottle(image, TestImg2, i & 0b10, i & 0b01);
+			// drawDebugImage(TestImg2, "correct_bottle_old");
 			// drawDebugImage(image, "orig");
 			correctBottleCv(resizedImg, img2Mat, i & 0b10, i & 0b01, remapSize != remapSizeBig);
-			// drawDebugImage(img2, "warp");
+			// drawDebugImage(img2, "correct_bottle");
 
             res = DetectNew(img2, true, true, warp, needToTraceWarp, correctCorners);
             if (!res.isValid()) continue;

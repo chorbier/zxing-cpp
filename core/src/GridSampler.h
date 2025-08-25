@@ -55,7 +55,7 @@ public:
 	Warp() = default;
 	Warp(int sampleCount, const PointF& defaultVal = { 0.0, 0.0 }) : xOffsets(sampleCount, defaultVal), yOffsets(sampleCount, defaultVal) {};
 	Warp(int xSize, int ySize, const PointF& defaultVal = { 0.0, 0.0 }) : xOffsets(xSize, defaultVal), yOffsets(ySize, defaultVal) {};
-	
+	Warp(std::vector<PointF> && x, std::vector<PointF>&& y) : xOffsets(std::move(x)), yOffsets(std::move(y)) {};
 	void Resample(int sizeX, int sizeY);
 
 	inline bool isValid() {
