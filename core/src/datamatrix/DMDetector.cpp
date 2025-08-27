@@ -192,54 +192,39 @@ namespace ZXing::DataMatrix {
 		}
 	}
 
-	int testCenterLineOffset(const BitMatrix& img) {
+	int8_t testCenterLineOffset(const BitMatrix& img) {
 		if(img.width() < 32 || img.width() > 52) return 0;
-		float lineInfo[4];
-		float lineInfoCnt[4];
+		uint8_t lineInfoCnt[4];
 		for(int i = 4; i--;){
-			lineInfo[i] = 0.0f;
 			lineInfoCnt[i] = 1.0f;
 		}
 		int startY = img.height() / 2 - 2;
 
 		for(int yo = 0; yo < 4; yo++) {
 			int y = startY + yo;
-			int cnt = 1;
 			uint8_t curState = img.get(0, y);
 			for(int x = 1; x < img.width(); x++) {
 				auto v = img.get(x, y);
 				if(curState != v) {
-					lineInfo[yo] += cnt;
 					lineInfoCnt[yo]++;
-					cnt = 0;
 					curState = v;
 				}
-				cnt++;
 			}
-			lineInfo[yo] /= lineInfoCnt[yo];
 		}
+
 		int indexSync = std::min_element(lineInfoCnt, lineInfoCnt + 4) - lineInfoCnt;
 		int indexLine = std::max_element(lineInfoCnt, lineInfoCnt + 4) - lineInfoCnt;
-		if(indexSync == 1 && indexLine == 2) {
-			return 0;
-		}
-		if(indexSync == 1 && indexLine == 0) {
-			return -1;
-		}
-		if(indexSync == 2 && indexLine == 3) {
-			return 1;
-		}
-		return 0;
+		int minLine = std::min(indexSync, indexLine);
+		return minLine - 1;
 	}
 
 
 
 	std::pair<int8_t, int8_t> testCenterLineBiOffset(const BitMatrix& img) {
-		// drawDebugImage(img, "offsets");
-		int offsetY = testCenterLineOffset(img);
+		int8_t offsetY = testCenterLineOffset(img);
 		auto imgRotated = img.copy();
 		imgRotated.rotate90();
-		int offsetX = testCenterLineOffset(imgRotated);
+		int8_t offsetX = testCenterLineOffset(imgRotated);
 		return {offsetX, offsetY};
 	}
 
@@ -426,15 +411,19 @@ namespace ZXing::DataMatrix {
     static DetectorResult SampleGridTestOffseted(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix)
     {
         auto res = SampleGrid(image, width, height, mod2Pix);
+		// return res;
 		auto [xMul, yMul] = testCenterLineBiOffset(res.bits());
 		if(xMul != 0 || yMul != 0) {
 			auto oo = mod2Pix({0, 0});
-			PointF xo = float(xMul) * (mod2Pix({width, 0}) - oo) / float(width);
-			PointF yo = float(yMul) * (mod2Pix({0, height}) - oo) / float(height);
+			// PointF xo = float(xMul) * (mod2Pix({width, 0}) - oo) / float(width);
+			// PointF yo = float(yMul) * (mod2Pix({0, height}) - oo) / float(height);
+			PointF xo = {float(xMul), 0.0f};
+			PointF yo = {0.0f, float(yMul)};
 			Warp w({{}, xo, {}}, {{}, yo, {}});
+			w.isFinal = false;
 			w.Resample(width, height);
 			res = SampleGridWarped(image, width, height, w, mod2Pix);
-			auto offsets = testCenterLineBiOffset(res.bits());
+			// auto offsets = testCenterLineBiOffset(res.bits());
 			return res;
 		}
 		return res;

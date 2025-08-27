@@ -633,11 +633,13 @@ DetectorResult SampleGridWarped(const BitMatrix& image, int width, int height, c
 			for (int x = x0; x < x1; ++x) {
 				// auto offsetX = Interp(warp.xOffsets, float(x) / float(x1 - 1));
 				auto offsetX = warp.xOffsets[x - x0];
-				auto p = mod2Pix(centered(PointI{x, y}));
+				auto p = mod2Pix(warp.isFinal ? centered(PointI{x, y}) : (centered(PointI{x, y}) + offsetX + offsetY));
 				
 				// AddDebug(p, 0);
-				p += offsetX;
-				p += offsetY;
+				if(warp.isFinal) {
+					p += offsetX;
+					p += offsetY;
+				}
 
 				// AddDebug(p, 1);
 

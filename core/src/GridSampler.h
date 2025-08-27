@@ -64,6 +64,7 @@ public:
 
 	std::vector<PointF> xOffsets;
 	std::vector<PointF> yOffsets;
+	bool isFinal = true;
 };
 using ROIs = std::vector<ROI>;
 DetectorResult SampleGrid(const BitMatrix& image, int width, int height, const ROIs& rois);
