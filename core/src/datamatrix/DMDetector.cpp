@@ -131,6 +131,42 @@ namespace ZXing::DataMatrix {
         return static_cast<float>(std::round(x));
     }
 
+	int8_t testCenterLineOffset(const BitMatrix& img) {
+		if(img.width() < 32 || img.width() > 52) return 0;
+		uint8_t lineInfoCnt[4];
+		for(int i = 4; i--;){
+			lineInfoCnt[i] = 1.0f;
+		}
+		int startY = img.height() / 2 - 2;
+
+		for(int yo = 0; yo < 4; yo++) {
+			int y = startY + yo;
+			uint8_t curState = img.get(0, y);
+			for(int x = 1; x < img.width(); x++) {
+				auto v = img.get(x, y);
+				if(curState != v) {
+					lineInfoCnt[yo]++;
+					curState = v;
+				}
+			}
+		}
+
+		int indexSync = std::min_element(lineInfoCnt, lineInfoCnt + 4) - lineInfoCnt;
+		int indexLine = std::max_element(lineInfoCnt, lineInfoCnt + 4) - lineInfoCnt;
+		int minLine = std::min(indexSync, indexLine);
+		return minLine - 1;
+	}
+
+
+
+	std::pair<int8_t, int8_t> testCenterLineBiOffset(const BitMatrix& img) {
+		int8_t offsetY = testCenterLineOffset(img);
+		auto imgRotated = img.copy();
+		imgRotated.rotate90();
+		int8_t offsetX = testCenterLineOffset(imgRotated);
+		return {offsetX, offsetY};
+	}
+
 /**
 * Calculates the position of the white top right module using the output of the rectangle detector
 * for a rectangular matrix
@@ -233,6 +269,34 @@ namespace ZXing::DataMatrix {
         return SampleGridWarped(image, width, height, warp,
                                 {Rectangle(width, height, 0.5), {topLeft, topRight, bottomRight, bottomLeft}});
     }
+
+    static DetectorResult SampleGridTestOffseted(const BitMatrix& image, int width, int height, const PerspectiveTransform& mod2Pix)
+    {
+        auto res = SampleGrid(image, width, height, mod2Pix);
+		// return res;
+		auto [xMul, yMul] = testCenterLineBiOffset(res.bits());
+		if(xMul != 0 || yMul != 0) {
+			auto oo = mod2Pix({0, 0});
+			// PointF xo = float(xMul) * (mod2Pix({width, 0}) - oo) / float(width);
+			// PointF yo = float(yMul) * (mod2Pix({0, height}) - oo) / float(height);
+			PointF xo = {float(xMul), 0.0f};
+			PointF yo = {0.0f, float(yMul)};
+			Warp w({{}, xo, {}}, {{}, yo, {}});
+			w.isFinal = false;
+			w.Resample(width, height);
+			res = SampleGridWarped(image, width, height, w, mod2Pix);
+			// auto offsets = testCenterLineBiOffset(res.bits());
+			return res;
+		}
+		return res;
+    }
+
+	static DetectorResult SampleGridTestOffseted(const BitMatrix& image, const ResultPoint& topLeft, const ResultPoint& bottomLeft,
+									const ResultPoint& bottomRight, const ResultPoint& topRight, int width, int height)
+	{
+		PerspectiveTransform mod2pix = { Rectangle(width, height, 0.5), {topLeft, topRight, bottomRight, bottomLeft} };
+		return SampleGridTestOffseted(image, width, height, mod2pix);
+	}
 
 /**
 * Returns the z component of the cross product between vectors BC and BA.
@@ -579,7 +643,9 @@ namespace ZXing::DataMatrix {
             res = SampleGrid(image, *topLeft, *bottomLeft - DirLeftBT, *bottomRight - DirRightBT, correctedTopRight, dimensionTop, dimensionRight);
             if(outDecoderResult = Decode(res.bits()); outDecoderResult.isValid()) return res;
             correctedOffset = false;
-            res = SampleGrid(image, *topLeft, *bottomLeft, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
+            // res = SampleGrid(image, *topLeft, *bottomLeft, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
+			res = SampleGridTestOffseted(image, *topLeft, *bottomLeft, *bottomRight, correctedTopRight, dimensionTop, dimensionRight);
+
             outDecoderResult = Decode(res.bits());
             return res;
         }
@@ -1036,7 +1102,7 @@ namespace ZXing::DataMatrix {
 					res = SampleGridWarped(*startTracer.img, dimT, dimR, *warp, PerspectiveTransform(Rectangle(dimT, dimR, 0), sourcePoints));
                 }
             } else {
-                res = SampleGrid(*startTracer.img, dimT, dimR, PerspectiveTransform(Rectangle(dimT, dimR, 0), sourcePoints));
+				res = SampleGridTestOffseted(*startTracer.img, dimT, dimR, PerspectiveTransform(Rectangle(dimT, dimR, 0), sourcePoints));
             }
 
             CHECK(res.isValid());
